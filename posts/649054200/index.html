@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>Nginx 多阶段 Http 请求处理流程 - Mer's Blog</title>
+
+  
+  <meta name="description" content="Nginx 通过将各个阶段的所有模块按序的组织成一条执行链，以流水线的形式依次进行处理。">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+<widget class="widget-wrapper toc single" id="data-toc"><div class="widget-header cap dis-select"><span class="name">Nginx 多阶段 Http 请求处理流程</span></div><div class="widget-body fs14"><div class="doc-tree active"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%89%A7%E8%A1%8C%E9%93%BE%E5%8F%8A%E6%B5%81%E7%A8%8B"><span class="toc-text">执行链及流程</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#HTTP-proxy%E6%A8%A1%E5%9D%97"><span class="toc-text">HTTP proxy模块</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#upstream%E6%A8%A1%E5%9D%97"><span class="toc-text">upstream模块</span></a></li></ol></div></div></widget>
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2022-04-11T09:42:32.000Z">2022-04-11</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>Nginx 多阶段 Http 请求处理流程</span></h1>
+<p>Nginx 通过将各个阶段的所有模块按序的组织成一条执行链，以流水线的形式依次进行处理。</p>
+<span id="more"></span>
+
+<h2 id="执行链及流程"><a href="#执行链及流程" class="headerlink" title="执行链及流程"></a>执行链及流程</h2><p>nginx执行链的定义如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> &#123;</span></span><br><span class="line">    <span class="type">ngx_http_phase_handler_t</span>    *handlers;            <span class="comment">/*执行链*/</span></span><br><span class="line">    <span class="type">ngx_uint_t</span>             server_rewrite_index;</span><br><span class="line">    <span class="type">ngx_uint_t</span>             location_rewrite_index;</span><br><span class="line">&#125; <span class="type">ngx_http_phase_engine_t</span>;</span><br></pre></td></tr></table></figure>
+
+<p>执行链节点的数据结构定义如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">ngx_http_phase_handler_s</span> &#123;</span></span><br><span class="line">    ngx_http_phase_handler_pt    checker;</span><br><span class="line">    ngx_http_handler_pt        handler;</span><br><span class="line">    <span class="type">ngx_uint_t</span>            next;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>对于执行链节点，相同阶段具有相同的checker函数，handler中则保存的是挂载至该阶段的模块处理函数，一般在checker函数中会执行当前节点的handler函数</p>
+<p>执行链的执行流程是按照执行链顺序向前执行，但某个阶段需要回跳或跳过之后的某些执行阶段，next字段保存的就是跳跃的目的索引。</p>
+<p>各个阶段如下：</p>
+<p><strong>NGX_HTTP_POST_READ_PHASE</strong></p>
+<p>接受完请求头之后的第一个阶段，位于uri重写之前，默认情况下该阶段被跳过;</p>
+<p>nginx源码中仅有realip模块在POST_READ阶段对客户端ip进行了替换，且该模块并未被默认编译进nginx</p>
+<p>POST_HEAD阶段的checker函数仅调用对应的handler函数，随后对返回值进行处理，当handler返回NGX_OK时进入下一阶段</p>
+<p><strong>NGX_HTTP_SERVER_REWRITE_PHASE</strong></p>
+<p>server级别的uri重写阶段，执行于server块内，location块外的重写指令。</p>
+<p>nginx的rewrite模块在此阶段提供url重写指令rewrite和变量指令set，以及逻辑控制指令if、break和return以供用户完成一些简单的需求而不必注册handler</p>
+<p>该阶段的请求未被匹配至具体的location中</p>
+<p>SERVER_REWRITE阶段的checker函数同样调用handler函数，但处理方式稍有不同，当handler返回NGX_DECLINED时进入下一阶段</p>
+<p><strong>NGX_HTTP_FIND_CONFIG_PHASE</strong></p>
+<p>这一阶段根据重写过的uri查找对应的location，可能被执行多次</p>
+<p>通过ngx_http_core_find_location函数完成对r-&gt;loc_conf的设置，然后调用ngx_http_update_location_config更新请求相关配置</p>
+<p><strong>NGX_HTTP_REWRITE_PHASE</strong></p>
+<p>location级别的重写阶段，该阶段执行location基本的重写指令，可能被执行多次。</p>
+<p>与SERVER_REWRITE的逻辑基本相同，使用相同的handler函数，只是执行的时机不同。</p>
+<p><strong>NGX_HTTP_POST_REWRITE_PHASE</strong></p>
+<p>该阶段不能挂载handler，仅用于检查REWRITE阶段是否进行uri重写，若发生重写则返回再次执行REWRITE阶段，默认限制的重写次数为10次</p>
+<p>介入该阶段的模块同样是rewrite模块</p>
+<p><strong>NGX_HTTP_PREACCESS_PHASE</strong></p>
+<p>访问权限控制的前一阶段，进入这一阶段时请求的loc_conf配置已经确定，在此阶段一般用于进行资源配置，限制连接数或请求速率。</p>
+<p>ngx_http_limit_conn_module和ngx_http_limit_req_module等模块会在该阶段注册handler</p>
+<p><strong>NGX_HTTP_ACCESS_PHASE</strong></p>
+<p>访问权限控制阶段,例如基于ip黑白名单的权限控制，或者基于用户名密码的权限控制。</p>
+<p>默认情况下nginx 的 ngx_http_access_module和ngx_http_auth_basic_module模块分别会在该阶段注册一个handler</p>
+<p>需要注意的是在此阶段需要满足所有的handler验证，即所有handler返回NGX_OK时，该阶段的checker函数才会进入下一阶段。</p>
+<p><strong>NGX_HTTP_POST_ACCESS_PHASE</strong></p>
+<p>此阶段仅根据ACCESS阶段的执行结果进行相应处理，不能挂载handler。</p>
+<p>当ACCESS阶段返回NGX_HTTP_FORBIDDEN或NGX_HTTP_UNAUTHORIZED时，会在此阶段结束请求</p>
+<p><strong>NGX_HTTP_TRY_FILES_PHASE</strong></p>
+<p>处理try_files指令，如果没有配置try_files指令，该阶段会被跳过。</p>
+<p>try_file指令用于检查指定的一个或多个文件或目录是否存在，若存在则执行之后的阶段，否则返回指定的lcoation或指定的返回码</p>
+<p>此阶段不能挂载handler</p>
+<p><strong>NGX_HTTP_CONTENT_PHASE</strong></p>
+<p>内容生成阶段，该阶段产生响应，并发送至客户端</p>
+<p>在CONTENT阶段中，checker函数首先检查是否设置了content_handler，这里的content_handler不同于挂载在执行链上的handler，是每个location都可以独立拥有的，若存在则nginx在CONTENT阶段会直接执行content_handler，而不会再执行本阶段的handler。</p>
+<p>在执行content_handler之前，nginx会将请求的write_event设置为ngx_http_request_empty_handler，这表示如果模块所设置的content_handler涉及到IO操作，则需要合理的设置读写 事件handler</p>
+<p>同样的nginx将r-&gt;content_handler(r)的返回值直接传入ngx_http_finalize_request中，因此如果content_handler并未完成整个请求的处理，就需要设置合适的返回值并将请求的引用 计数加1以防请求被释放</p>
+<p>如果没有注册content_handler，则与之前的阶段类似，checker会调用handler函数，而由于CONTENT是ngx_http_core_run_phases的最后一个阶段，因此若handler未返回NGX_DECLINED，checker将会结束请求并返回NGX_OK，否则将会返回NGX_FORBIDDEN或NGX_HTTP_NOT_FOUND</p>
+<p><strong>NGX_HTTP_LOG_PHASE</strong></p>
+<p>日志记录阶段，该阶段记录访问日志，进入该阶段标明该请求的响应已经发送到系统的发送缓冲区中。</p>
+<p>LOG阶段的执行位于ngx_http_free_request中，在这个阶段中会遍历LOG阶段的所有handler并执行</p>
+<hr>
+<h2 id="HTTP-proxy模块"><a href="#HTTP-proxy模块" class="headerlink" title="HTTP proxy模块"></a>HTTP proxy模块</h2><p>HttpProxy模块用于将请求导向其他服务</p>
+<p>Nginx与客户端使用HTTP&#x2F;1.1通信，而在后台服务使用HTTP&#x2F;1.0通信</p>
+<p>在Nginx中, HTTP proxy模块介入于HTTP处理流程的CONTENT阶段，proxy模块通过”proxy_pass”配置的ngx_http_proxy_handler（位于ngx_http_proxy_module.c)中</p>
+<p><code>rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);</code></p>
+<p>设置处理请求的post_hadnler为ngx_http_upstream_init</p>
+<p>而在 ngx_http_read_client_request_body 中</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (r != r-&gt;main || r-&gt;request_body || r-&gt;discard_body) &#123;</span><br><span class="line">        r-&gt;request_body_no_buffering = <span class="number">0</span>;</span><br><span class="line">        post_handler(r);</span><br><span class="line">        <span class="keyword">return</span> NGX_OK;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<p>将请求交由upstream处理</p>
+<p><strong>部分proxy模块配置</strong></p>
+<p>proxy_pass：用于指定方向代理服务器的服务器池<br>proxy_set_header:用于添加一些请求头，传递至代理服务器。<br>  例如 proxy_set_header Host $http_host 用于区分后端主机<br>       proxy_set_header X-Real_IP $remote_addr 以便后端获得客户端的真实IP<br>proxy_body_buffer_size:指定缓冲区大小<br>proxy_connect_timeout:指定与后端连接的超时时间<br>proxy_send_timeout:指定后端服务器的数据回传超时时间</p>
+<h2 id="upstream模块"><a href="#upstream模块" class="headerlink" title="upstream模块"></a>upstream模块</h2><p>Upstream模块与Handler相似，区别在于upstream模块不产生内容,而是通过请求后端服务器得到内容，在使用中upstream模块只需开发若干回调函数，完成构造请求和解析响应等工作</p>
+<p><strong>upstream模块的处理流程</strong></p>
+<p>1.创建upstream数据结构<br>2.设置模块的tag和schema,其中schema用于日志，tag用于buf_chain管理<br>3.设置upstream的后端服务器列表<br>4.设置upstream回调函数<br>5.创建并设置upstream环境<br>6.完成初始化并进行收尾工作</p>
+<p>此upstream的实际行为主要有两点，同上游主机建立连接并获取资源，以及将从上游主机中获取到的资源转发至下游客户端</p>
+<p>而在同上游主机建立连接之前，nginx首先需要决定应当同 upstream 配置的后端主机列表中的哪一个建立连接</p>
+<p>负载均衡模块用于从 upstream 指令所定义的后端主机列表中选取一台主机，以便进行之后建立连接以及获取相应的资源。</p>
+<p>nginx内置的负载均衡模块主要有两种，默认为轮询模式，另一种则是ip_hash模式</p>
+<p>ip_hash的主要逻辑位于 ngx_http_upstream_ip_hash 中，在这里这个函数主要做了两件事，对uscf-&gt;flags进行设置，以及设置init_upstream的回调函数为 ngx_http_upstream_init_ip_hash</p>
+<p>在 ngx_http_upstream_init_ip_hash 中upstream将peer.init 设置为 ngx_http_upstream_init_ip_hash_peer（这个函数将会在 upstream 初始化请求时被调用）</p>
+<p>通过调用peer.init，nginx会为每一个请求构造一张包含所有可用的upstream服务器的表，用于负载均衡计算以及提供当服务器宕机时的储备</p>
+<p>同样在 ip_hash_peer 中，将upstream-&gt;peer.get的回调函数设置为 ngx_http_upstream_get_ip_hash_peer该函数负责从服务器表中取出某个服务器，通过get函数的返回值，nginx可以了解是否存在可用连接以及连接是否被建立</p>
+<p>可能的返回值如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">NGX_DONE: 得到连接地址，且连接已被建立</span><br><span class="line">NGX_OK: 得到连接地址，但连接并未建立</span><br><span class="line">NGX_BUSY: 所有连接均不可用</span><br></pre></td></tr></table></figure>
+
+<p>得到并建立一个连接之后,upstream就可以尝试向此连接中发送请求头和请求体了，upstream使用 ngx_http_upstream_send_request 向后端发送请求</p>
+<p>而在得到来自上游服务器的响应之后，upstream通过 ngx_http_upstream_process_header 将来自上游服务器的响应内容进行处理，并通过 ngx_http_upstream_send_response 返回至客户端</p>
+<p>最后，upstream通过 peer.free 和 ngx_http_upstream_finalize 释放资源和连接</p>
+<p>以上就是 Nginx 多阶段处理 Http 请求的全部过程</p>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"><div class="note">较新文章</div><a href="/posts/324638463/">Windows7 下安装 Oracle RAC11gR2</a></div><div class="item" id="next"></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
