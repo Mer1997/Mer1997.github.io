@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>Ceph MDS Stuck in Client Replay 问题分析 - Mer's Blog</title>
+
+  
+  <meta name="description" content="最近一直在做 MDS 高可用方面的工作，发现 MDS （带 IO）重启时可能会长时间卡在 Client Replay 状态。这里对问题的原因做了一下分析，并给出了现有的以及未来的解决办法，希望能对大家有所帮助。">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+<widget class="widget-wrapper toc single" id="data-toc"><div class="widget-header cap dis-select"><span class="name">Ceph MDS Stuck in Client Replay 问题分析</span></div><div class="widget-body fs14"><div class="doc-tree active"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1%E6%A2%B3%E7%90%86"><span class="toc-text">问题现象梳理</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%8E%9F%E5%9B%A0%E5%88%86%E6%9E%90"><span class="toc-text">原因分析</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%A6%82%E4%BD%95%E8%A7%A3%E5%86%B3"><span class="toc-text">如何解决</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%A4%BE%E5%8C%BA%E7%9A%84%E7%9B%B8%E5%85%B3%E8%BF%9B%E5%B1%95"><span class="toc-text">社区的相关进展</span></a></li></ol></div></div></widget>
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2023-03-26T04:34:54.000Z">2023-03-26</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>Ceph MDS Stuck in Client Replay 问题分析</span></h1>
+<p>最近一直在做 MDS 高可用方面的工作，发现 MDS （带 IO）重启时可能会长时间卡在 Client Replay 状态。这里对问题的原因做了一下分析，并给出了现有的以及未来的解决办法，希望能对大家有所帮助。</p>
+<span id="more"></span>
+
+<h2 id="问题现象梳理"><a href="#问题现象梳理" class="headerlink" title="问题现象梳理"></a>问题现象梳理</h2><p>通过 <code>ceph -s</code> 看到 MDS 的状态长时间在 <code>client replay</code> 状态不变化：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">[root@node2 ~]<span class="comment"># ceph -s</span></span><br><span class="line">    cluster:</span><br><span class="line">    ...</span><br><span class="line">    mds: cephfs: 1/1 &#123;0=node2=up:clientreplay&#125;</span><br></pre></td></tr></table></figure>
+
+<p>查看 MDS 状态会发现 <code>clientreplay_queue</code> 不为空，但是如果打开 MDS 日志会发现 MDS 什么都没做（除了心跳）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">ceph tell mds.ocs-storagecluster-cephfilesystem:0 status</span><br><span class="line">&#123;</span><br><span class="line">  ...</span><br><span class="line">    <span class="string">&quot;clientreplay_status&quot;</span>: &#123;</span><br><span class="line">        <span class="string">&quot;clientreplay_queue&quot;</span>: 125048,</span><br><span class="line">        <span class="string">&quot;active_replay&quot;</span>: 0</span><br><span class="line">    &#125;,</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="原因分析"><a href="#原因分析" class="headerlink" title="原因分析"></a>原因分析</h2><p>那这里我们要分析这个问题，就要先知道 MDS 在 Client Replay 阶段做了什么。</p>
+<p>首先我们知道 MDS 在启动过程中在 Replay 阶段完成以后（多 MDS 要在 Resolve 阶段以后）会进入 Reconnect 阶段，这个阶段顾名思义会等待客户端进行重连，这也是 MDS 在进入 Active 状态之前唯一能接收客户端请求的阶段，因此客户端会在这个阶段通过 <code>Client::send_reconnect</code> 向 MDS 发送 <code>unsafe_requests</code>, <code>old_requests</code> 以及 <code>client_reconnect</code> 消息, 其中 <code>unsafe_requests</code> 会通过 <code>enqueue_replay</code> 加入 <code>replay_queue</code> 中，<code>old_requests</code> 则会加入 <code>waiting_for_active</code> 等待 MDS 到 <code>active</code> 再处理，<code>client_reconnect</code> 消息则是客户端向 MDS 发送的最后一条消息表示客户端重连完成了（如果 MDS 没有收到这条消息就会把客户端 kill 掉）</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::dispatch</span><span class="params">(<span class="type">const</span> <span class="type">cref_t</span>&lt;Message&gt; &amp;m)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  ...</span><br><span class="line">    <span class="keyword">if</span> (queue_replay) &#123;</span><br><span class="line">      req-&gt;<span class="built_in">mark_queued_for_replay</span>();</span><br><span class="line">      mds-&gt;<span class="built_in">enqueue_replay</span>(<span class="keyword">new</span> <span class="built_in">C_MDS_RetryMessage</span>(mds, m));</span><br><span class="line">      <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<p>接着 MDS 到达 Client Replay 阶段之后就会从 <code>replay_queue</code> 中依次取出刚刚插入的消息并处理，如果一切正常的话每条消息都会在处理完成后 <code>Server::journal_and_reply</code> 或者 <code>Server::reply_client_request</code> 中通过 <code>queue_one_replay</code> 取出下一条消息并处理。</p>
+<p>但问题在于并不是每一种情况 MDS 都能 cover 到，首先在任何情况下 Client 都有可能掉线，这导致 MDS 可能在任何时刻 <code>kill_session</code> （一个比较常见的情况是 ganesha 在 <code>client_metadata</code> 里设置了 <code>timeout</code> 所以没有在 Reconnect 阶段 <code>kill_session</code>）</p>
+<p>那么如果处理消息时 client session 被 kill 掉又会发生什么呢，正常情况下在 <code>Server::handle_client_request</code> 中如果发现这个 session 被 kill 了那么会 <code>queue_one_replay</code> 处理下一个消息：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::handle_client_request</span><span class="params">(<span class="type">const</span> <span class="type">cref_t</span>&lt;MClientRequest&gt; &amp;req)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  <span class="keyword">if</span> (!session) &#123;</span><br><span class="line">    <span class="keyword">if</span> (req-&gt;<span class="built_in">is_queued_for_replay</span>())</span><br><span class="line">      mds-&gt;<span class="built_in">queue_one_replay</span>();</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>但是如果这个消息此时不是刚开始处理的话就会遇到问题了，假设此前处理请求时候,需要拿锁 <code>Server::acquire_locks</code>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">2022-03-15 12:22:40.185171 7f3e57e90700 10 mds.0.locker wrlock_start (inest <span class="built_in">sync</span> dirty) on ...</span><br></pre></td></tr></table></figure>
+
+<p>这里拿 <code>wrlock</code> 想要把 <code>inest</code> 锁从 <code>sync</code> 状态转成 <code>lock</code> 状态，但是因为此时 <code>inest</code> 锁状态是 <code>dirty</code> 的，因此需要通过 <code>scatter_writebehind</code> 刷一把 <code>journal</code>，并 <code>WAIT_STABLE</code>:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">bool</span> <span class="title">Locker::wrlock_start</span><span class="params">(<span class="type">const</span> MutationImpl::LockOp &amp;op, MDRequestRef&amp; mut)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  ...</span><br><span class="line">  <span class="built_in">dout</span>(<span class="number">7</span>) &lt;&lt; <span class="string">&quot;wrlock_start waiting on &quot;</span> &lt;&lt; *lock &lt;&lt; <span class="string">&quot; on &quot;</span> &lt;&lt; *lock-&gt;<span class="built_in">get_parent</span>() &lt;&lt; dendl;</span><br><span class="line">  lock-&gt;<span class="built_in">add_waiter</span>(SimpleLock::WAIT_STABLE, <span class="keyword">new</span> <span class="built_in">C_MDS_RetryRequest</span>(mdcache, mut));</span><br><span class="line">  <span class="built_in">nudge_log</span>(lock);</span><br><span class="line"></span><br><span class="line">  <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里注意 <code>add_waiter</code> 设置的回调是 <code>C_MDS_RetryRequest</code> 和之前加入 <code>replay_queue</code> 时的 <code>C_MDS_RetryMessage</code> 是不一样的，这里就是问题的关键。</p>
+<p>当 <code>scatter_writebehind</code> 完成之后由 <code>scatter_writebehind_finish</code> 调到 <code>C_MDS_RetryRequest::finish</code></p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">C_MDS_RetryRequest::finish</span><span class="params">(<span class="type">int</span> r)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  mdr-&gt;retry++;</span><br><span class="line">  cache-&gt;<span class="built_in">dispatch_request</span>(mdr);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里直接进入了 <code>MDCache::dispatch_request</code>:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">MDCache::dispatch_request</span><span class="params">(MDRequestRef&amp; mdr)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  <span class="keyword">if</span> (mdr-&gt;client_request) &#123;</span><br><span class="line">    mds-&gt;server-&gt;<span class="built_in">dispatch_client_request</span>(mdr);</span><br></pre></td></tr></table></figure>
+
+<p>可以看到这里没有走 <code>Server::handle_client_request</code> 而是直接进入了 <code>Server::dispatch_client_request</code>，在这里对于已经被 kill 掉的 session 的处理就有一个 corner case:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::dispatch_client_request</span><span class="params">(MDRequestRef&amp; mdr)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  <span class="comment">// we shouldn&#x27;t be waiting on anyone.</span></span><br><span class="line">  <span class="built_in">ceph_assert</span>(!mdr-&gt;<span class="built_in">has_more</span>() || mdr-&gt;<span class="built_in">more</span>()-&gt;waiting_on_peer.<span class="built_in">empty</span>());</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (mdr-&gt;killed) &#123;</span><br><span class="line">    <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot;request &quot;</span> &lt;&lt; *mdr &lt;&lt; <span class="string">&quot; was killed&quot;</span> &lt;&lt; dendl;</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">  &#125;</span><br><span class="line">  ...</span><br></pre></td></tr></table></figure>
+
+<p>这里可以看到直接 <code>return</code> 掉了而没有进行 <code>queue_one_replay</code>，这就使得 MDS 没有办法继续往下进行了</p>
+<p>除了这种情况以外在 <code>MDCache::request_start</code> 失败时也会直接返回而不会有机会 <code>queue_one_replay</code></p>
+<h2 id="如何解决"><a href="#如何解决" class="headerlink" title="如何解决"></a>如何解决</h2><p>目前遇到这种情况没有其他办法，只能通过重启 MDS 来解决（因为没有机会触发 <code>queue_one_replay</code>）</p>
+<h2 id="社区的相关进展"><a href="#社区的相关进展" class="headerlink" title="社区的相关进展"></a>社区的相关进展</h2><p>这个问题实际上社区很早就发现了， <code>queue_one_replay</code> 这个改动就是 YanZheng 在 <a target="_blank" rel="noopener" href="https://github.com/ceph/ceph/commit/6352f181878a075621e5ae6c34710ba22e4f8fde">6352f181</a> 为了 fix ‘stuck in clientreplay’ 的问题提的，但是实际上就像我上面分析的还有一些 corner case 没有覆盖到，这就导致在一些场景下我们仍会遇到这样的问题。</p>
+<p>最新的话是 Patrick 在 <a target="_blank" rel="noopener" href="https://github.com/ceph/ceph/pull/47121">#47121</a> 中提了一个改动想统一一下 <code>queue_one_replay</code> 的位置，正好我前两天分析了这一块所以给 Patrick 说了现有的这些可能导致 MDS 卡住的情况，然后后面我会再看一下他提的这个 PR 能不能解决问题，如果可以的话后面合到主线应该就不会出现这种问题了。</p>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"></div><div class="item" id="next"><div class="note">较早文章</div><a href="/posts/2906464195/">如何实现一个最小堆</a></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
