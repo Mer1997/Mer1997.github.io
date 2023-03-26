@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>如何实现一个最小堆 - Mer's Blog</title>
+
+  
+  <meta name="description" content="本文介绍如何使用 C++ 实现一个通用的、线程安全的最小堆">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+
+<widget class="widget-wrapper recent"><div class="widget-header cap theme dis-select"><span class="name">最近更新</span></div><div class="widget-body related-posts fs14"><a class="item title" href="/posts/2906464195/"><span class="title">如何实现一个最小堆</span></a><a class="item title" href="/posts/649054200/"><span class="title">Nginx 多阶段 Http 请求处理流程</span></a><a class="item title" href="/posts/781272769/"><span class="title">如何向 STL 算法中传入重载函数</span></a><a class="item title" href="/posts/4037772901/"><span class="title">RAC 集群访问过程分析</span></a><a class="item title" href="/posts/324638463/"><span class="title">Windows7 下安装 Oracle RAC11gR2</span></a></div></widget>
+
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2023-03-25T17:36:41.000Z">2023-03-26</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>如何实现一个最小堆</span></h1>
+<p>本文介绍如何使用 C++ 实现一个通用的、线程安全的最小堆</p>
+<span id="more"></span>
+
+<p>顺便一提，写此文的时候突然想到了多年以前（16、17年）盛行的 Mooc，当时国内有很多类似的慕课网站，也有很多优秀的课程，我的基础数据结构和算法就是一位 ACM 铜牌的老师教的，至今受用，但是现在好像很少看到此类网站了，还是比较可惜的。</p>
+<p>进入正题，最小堆本身是一个完全二叉树，保证每一个节点都不会大于其左右子节点，要实现一个最小堆的两个核心函数是 <code>sift_up</code> 和 <code>sift_down</code>，用于调整最小堆结构以符合定义。</p>
+<p>首先给出 <code>MinHeap</code> 的基本定义和成员变量：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;std::three_way_comparable T&gt;</span><br><span class="line"><span class="keyword">class</span> <span class="title class_">MinHeap</span></span><br><span class="line">&#123;</span><br><span class="line">    std::shared_mutex mtx;</span><br><span class="line">    std::vector&lt;T&gt; vec;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>vec</code> 用于保存最小堆的各个节点（完全二叉树很适合用数组保存），而 <code>std::three_way_comparable</code> 则是对容器元素类型的 <code>concept</code> 约束，要求元素类型必须是可比较的，毕竟不可比较的话也就没有“最小”的概念了。</p>
+<p><code>sift_down</code> 和 <code>sift_up</code> 是相反的一组用于调整堆的操作，<code>sift_down</code> 用于将一个元素向下调整至满足最小堆的条件，<code>sift_up</code> 则相反，由此可以知道对于任何一个完全二叉数我们只需要上到下执行 <code>sift_down</code> 或者从下到上执行 <code>sift_up</code> 就可以使得堆中的每一个节点都满足最小堆的条件</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">  5      sift_down(5)      2   </span><br><span class="line"> / \    ==============&gt;   / \            </span><br><span class="line">2   6     sift_up(2)     5   6 </span><br></pre></td></tr></table></figure>
+
+<p>可以看到不管是对 2 所在的节点执行 <code>sift_up</code> 还是对 5 所在的节点执行 <code>sift_down</code> 都能完成我们想要的效果。</p>
+<p>接着在给出二者的定义前先给出对最小堆的一些基本操作：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span>:</span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">push</span> <span class="params">(T val)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    std::unique_lock lock &#123;mtx&#125;;</span><br><span class="line">    vec.<span class="built_in">push_back</span>(val);</span><br><span class="line">    <span class="built_in">sift_up</span>(vec.<span class="built_in">size</span>()<span class="number">-1</span>);</span><br><span class="line">&#125;</span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">pop</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="built_in">assert</span>(!vec.<span class="built_in">empty</span>());</span><br><span class="line">    std::unique_lock lock &#123;mtx&#125;;</span><br><span class="line">    vec[<span class="number">0</span>] = vec.<span class="built_in">back</span>();</span><br><span class="line">    vec.<span class="built_in">pop_back</span>();</span><br><span class="line">    <span class="built_in">sift_down</span>(<span class="number">0</span>);</span><br><span class="line">&#125;</span><br><span class="line"><span class="function"><span class="type">const</span> T&amp; <span class="title">top</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="built_in">assert</span>(!vec.<span class="built_in">empty</span>());</span><br><span class="line">    std::shared_lock lock &#123;mtx&#125;;</span><br><span class="line">    <span class="keyword">return</span> vec.<span class="built_in">front</span>();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>push</code> 和 <code>pop</code> 就是对堆调整以符合最小堆定义的过程，因为每次只有一个节点发生变化（新增或者删除），所以只需要对涉及的节点调整即可</p>
+<p>下面给出 <code>sift_up</code> 和 <code>sift_down</code> 的定义如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">sift_up</span><span class="params">(<span class="type">size_t</span> index)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (index == <span class="number">0</span>) <span class="keyword">return</span>;</span><br><span class="line">    <span class="type">size_t</span> parent = (index - <span class="number">1</span>) / <span class="number">2</span>;</span><br><span class="line">    <span class="keyword">if</span> (vec[index] &lt; vec[parent]) &#123;</span><br><span class="line">        std::<span class="built_in">swap</span>(vec[index], vec[parent]);</span><br><span class="line">        <span class="built_in">sift_up</span>(parent);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">sift_down</span><span class="params">(<span class="type">size_t</span> index)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (index &gt;= vec.<span class="built_in">size</span>()) <span class="keyword">return</span>;</span><br><span class="line">    <span class="type">size_t</span> left = index * <span class="number">2</span> + <span class="number">1</span>;</span><br><span class="line">    <span class="type">size_t</span> right = index * <span class="number">2</span> + <span class="number">2</span>;</span><br><span class="line">    std::optional&lt;<span class="type">size_t</span>&gt; swap_to;</span><br><span class="line">    <span class="keyword">if</span> (left &lt; vec.<span class="built_in">size</span>() &amp;&amp; vec[left] &lt; vec[index]) &#123;</span><br><span class="line">        swap_to = left;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (right &lt; vec.<span class="built_in">size</span>() &amp;&amp; vec[right] &lt; vec[index]) &#123;</span><br><span class="line">        <span class="keyword">if</span> (!swap_to || vec[right] &lt; vec[swap_to.<span class="built_in">value</span>()]) &#123;</span><br><span class="line">            swap_to = right;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (swap_to) &#123;</span><br><span class="line">        std::<span class="built_in">swap</span>(vec[index], vec[swap_to.<span class="built_in">value</span>()]);</span><br><span class="line">        <span class="built_in">sift_down</span>(swap_to.<span class="built_in">value</span>());</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>应该还是比较好理解的，因为只有一个节点不（一定）满足最小堆条件，因此对于 <code>sift_up</code> 只需要判断自身和其父节点的大小关系并交换即可，而对于 <code>sift_down</code> 则是需要选出两个子节点中更小的那个并与之交换。</p>
+<p>注意这里的 <code>sift_up</code> 和 <code>sift_down</code> 都是一个递归的过程，直到抵达堆的根节点或者叶子节点</p>
+<p>以上我们就已经实现了一个通用的、线程安全的最小堆，这里给出堆的完整定义（为了方便使用包含 <code>dump</code>）：</p>
+<details class="tag-plugin folding" child="codeblock"><summary><span>完整的 MinHeap 实现</span></summary><div class="body"><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;std::three_way_comparable T&gt;</span><br><span class="line"><span class="keyword">class</span> <span class="title class_">MinHeap</span></span><br><span class="line">&#123;</span><br><span class="line">    std::shared_mutex mtx;</span><br><span class="line">    std::vector&lt;T&gt; vec;</span><br><span class="line"><span class="keyword">public</span>:</span><br><span class="line">    <span class="function"><span class="type">void</span> <span class="title">push</span> <span class="params">(T val)</span></span></span><br><span class="line"><span class="function">    </span>&#123;</span><br><span class="line">        std::unique_lock lock &#123;mtx&#125;;</span><br><span class="line">        vec.<span class="built_in">push_back</span>(val);</span><br><span class="line">        <span class="built_in">sift_up</span>(vec.<span class="built_in">size</span>()<span class="number">-1</span>);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="function"><span class="type">void</span> <span class="title">pop</span><span class="params">()</span></span></span><br><span class="line"><span class="function">    </span>&#123;</span><br><span class="line">        <span class="built_in">assert</span>(!vec.<span class="built_in">empty</span>());</span><br><span class="line">        std::unique_lock lock &#123;mtx&#125;;</span><br><span class="line">        vec[<span class="number">0</span>] = vec.<span class="built_in">back</span>();</span><br><span class="line">        vec.<span class="built_in">pop_back</span>();</span><br><span class="line">        <span class="built_in">sift_down</span>(<span class="number">0</span>);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="function"><span class="type">const</span> T&amp; <span class="title">top</span><span class="params">()</span></span></span><br><span class="line"><span class="function">    </span>&#123;</span><br><span class="line">        <span class="built_in">assert</span>(!vec.<span class="built_in">empty</span>());</span><br><span class="line">        std::shared_lock lock &#123;mtx&#125;;</span><br><span class="line">        <span class="keyword">return</span> vec.<span class="built_in">front</span>();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="function"><span class="type">void</span> <span class="title">sift_up</span><span class="params">(<span class="type">size_t</span> index)</span></span></span><br><span class="line"><span class="function">    </span>&#123;</span><br><span class="line">        <span class="keyword">if</span> (index == <span class="number">0</span>) <span class="keyword">return</span>;</span><br><span class="line">        <span class="type">size_t</span> parent = (index - <span class="number">1</span>) / <span class="number">2</span>;</span><br><span class="line">        <span class="keyword">if</span> (vec[index] &lt; vec[parent]) &#123;</span><br><span class="line">            std::<span class="built_in">swap</span>(vec[index], vec[parent]);</span><br><span class="line">            <span class="built_in">sift_up</span>(parent);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="function"><span class="type">void</span> <span class="title">sift_down</span><span class="params">(<span class="type">size_t</span> index)</span></span></span><br><span class="line"><span class="function">    </span>&#123;</span><br><span class="line">        <span class="keyword">if</span> (index &gt;= vec.<span class="built_in">size</span>()) <span class="keyword">return</span>;</span><br><span class="line">        <span class="type">size_t</span> left = index * <span class="number">2</span> + <span class="number">1</span>;</span><br><span class="line">        <span class="type">size_t</span> right = index * <span class="number">2</span> + <span class="number">2</span>;</span><br><span class="line">        std::optional&lt;<span class="type">size_t</span>&gt; swap_to;</span><br><span class="line">        <span class="keyword">if</span> (left &lt; vec.<span class="built_in">size</span>() &amp;&amp; vec[left] &lt; vec[index]) &#123;</span><br><span class="line">            swap_to = left;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (right &lt; vec.<span class="built_in">size</span>() &amp;&amp; vec[right] &lt; vec[index]) &#123;</span><br><span class="line">            <span class="keyword">if</span> (!swap_to || vec[right] &lt; vec[swap_to.<span class="built_in">value</span>()]) &#123;</span><br><span class="line">                swap_to = right;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (swap_to) &#123;</span><br><span class="line">            std::<span class="built_in">swap</span>(vec[index], vec[swap_to.<span class="built_in">value</span>()]);</span><br><span class="line">            <span class="built_in">sift_down</span>(swap_to.<span class="built_in">value</span>());</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="function"><span class="type">void</span> <span class="title">dump</span><span class="params">()</span></span></span><br><span class="line"><span class="function">    </span>&#123;</span><br><span class="line">        std::shared_lock lock &#123;mtx&#125;;</span><br><span class="line">        <span class="keyword">for</span> (<span class="keyword">auto</span> iter = vec.<span class="built_in">begin</span>(); iter != vec.<span class="built_in">end</span>(); ++iter) &#123;</span><br><span class="line">            std::cout &lt;&lt; *iter;</span><br><span class="line">            <span class="keyword">if</span> (std::<span class="built_in">distance</span>(iter, vec.<span class="built_in">end</span>()) != <span class="number">1</span>) &#123;</span><br><span class="line">                std::cout &lt;&lt; <span class="string">&quot;, &quot;</span>;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                std::cout &lt;&lt; std::endl;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></div></details>
+
+<p>用法示例以及运行结果如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">auto</span> <span class="title">main</span><span class="params">(<span class="type">void</span>)</span> -&gt; <span class="type">int</span> </span>&#123;</span><br><span class="line">    <span class="keyword">auto</span> heap = MinHeap&lt;<span class="type">int</span>&gt; &#123;&#125;;</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">177</span>);</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">3</span>);</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">110</span>);</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">19</span>);</span><br><span class="line">    heap.<span class="built_in">pop</span>();</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">21</span>);</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">112</span>);</span><br><span class="line">    heap.<span class="built_in">push</span>(<span class="number">18</span>);</span><br><span class="line">    std::cout &lt;&lt; <span class="string">&quot;heap&#x27;s top is &quot;</span> &lt;&lt; heap.<span class="built_in">top</span>() &lt;&lt; std::endl;</span><br><span class="line">    heap.<span class="built_in">dump</span>();</span><br><span class="line">    heap.<span class="built_in">pop</span>();</span><br><span class="line">    heap.<span class="built_in">pop</span>();</span><br><span class="line">    std::cout &lt;&lt; <span class="string">&quot;heap&#x27;s top is &quot;</span> &lt;&lt; heap.<span class="built_in">top</span>() &lt;&lt; std::endl;</span><br><span class="line">    heap.<span class="built_in">dump</span>();</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>运行结果：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">heap<span class="string">&#x27;s top is 18</span></span><br><span class="line"><span class="string">18, 21, 19, 177, 112, 110</span></span><br><span class="line"><span class="string">heap&#x27;</span>s top is 21</span><br><span class="line">21, 112, 110, 177</span><br></pre></td></tr></table></figure>
+
+<p>可以看到不论我们以任何顺序插入和删除元素都能够保证 <code>MinHeap</code> 始终是一个最小堆</p>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"></div><div class="item" id="next"><div class="note">较早文章</div><a href="/posts/3692590940/">C++ Coroutine: 通用异步任务 Task</a></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
