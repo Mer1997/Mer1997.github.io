@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>Ceph 读写流程：file_to_extents 过程分析 - Mer's Blog</title>
+
+  
+  <meta name="description" content="本文对 Ceph 中 Striper::file_to_extents 的流程进行分析和总结。">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+<widget class="widget-wrapper toc single" id="data-toc"><div class="widget-header cap dis-select"><span class="name">Ceph 读写流程：file_to_extents 过程分析</span></div><div class="widget-body fs14"><div class="doc-tree active"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#Ceph-%E4%B8%AD%E7%9A%84-Stripping"><span class="toc-text">Ceph 中的 Stripping</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#file-to-extents-%E6%B5%81%E7%A8%8B"><span class="toc-text">file_to_extents 流程</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#References"><span class="toc-text">References</span></a></li></ol></div></div></widget>
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2023-03-30T06:02:08.000Z">2023-03-30</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>Ceph 读写流程：file_to_extents 过程分析</span></h1>
+<p>本文对 Ceph 中 <code>Striper::file_to_extents</code> 的流程进行分析和总结。</p>
+<span id="more"></span>
+
+<p>在 <code>Client::_write</code> 中客户端通过 <code>filer-&gt;write_trunc</code> 对文件进行写入，<code>write_trunc</code> 其中分为两步:</p>
+<ol>
+<li>通过 <code>Striper::file_to_extents</code> 对请求进行拆分，也就是将对文件的读写请求转换为对对象的读写请求</li>
+<li>通过 <code>objecter-&gt;sg_write_trunc</code> 把数据写到 object 中</li>
+</ol>
+<p>本文主要对其中的第一步，也就是 <code>Striper::file_to_extents</code> 的过程进行分析。</p>
+<h2 id="Ceph-中的-Stripping"><a href="#Ceph-中的-Stripping" class="headerlink" title="Ceph 中的 Stripping"></a>Ceph 中的 Stripping</h2><p>在正式开始先简单介绍一下 Ceph 中条带化（Stripping）读写的相关概念：</p>
+<details class="tag-plugin folding" ><summary><span>为什么要使用 Stripping</span></summary><div class="body"><p>最主要的原因就是由于单个存储设备存在吞吐量限制，例如一块机械硬盘的写入能力最大也不过 200MB&#x2F;s, 在与内存、固态缓存甚至是万兆网络的吞吐量对比下无疑就是整个系统中最大的短板，那么条带化就是用来解决存储设备性能瓶颈，提高存储系统吞吐量的东西。</p><p>那么什么是条带化，说的准确一点就是把信息的连续部分存储在多个存储设备上，说人话就是把一个文件切成多份放在不同的磁盘上，每次对文件中一段内容的读写会同时发给多个盘，这样的话我们实际的写入速度就变成了多个磁盘的写入速度总和。</p></div></details>
+
+<p>Ceph 中的条带化的概念大致和其他存储没有区别，只不过在 Ceph 中所有的存储最后都会落到 <code>object</code> 也就是对象上，而对象的存储是没有条带化的，因此文件的条带化实际上是在客户端上进行的，也就是我们本文的主要内容 <code>file_to_extents</code> 的过程</p>
+<p>以下图为例，对文件数据的写入首先会在 <code>ObjectSet1</code> 的 <code>Object0</code> 的 <code>stripe unit0</code> 中进行, 当第一个条带被写满之后，后续的写会移动到 <code>Object1</code> 的 <code>stripe unit1</code> 上进行，直到 <code>Object3</code> 的 <code>stripe unit3</code> 被写满之后 Ceph 会根据 <code>ObjectSet</code> 中可容纳的对象数量判断是否写满，并将后续的写转回到 <code>Object0</code> 上的 <code>stripe unit4</code> 中进行。而这个过程在一次包含比较多数据的写中当然是可以并行执行的，只要我们提前计算好写入涉及的 <code>objects</code> 即可。</p>
+<p><img class="lazy" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAABGdBTUEAALGPC/xhBQAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAADa6r/EAAAAC0lEQVQIHWNgAAIAAAUAAY27m/MAAAAASUVORK5CYII=" data-src="https://docs.ceph.com/en/latest/_images/ditaa-96a6fc80dad17fb53f161987ed64f0779930ffe1.png"></p>
+<h2 id="file-to-extents-流程"><a href="#file-to-extents-流程" class="headerlink" title="file_to_extents 流程"></a>file_to_extents 流程</h2><p>概念理解以后我们就正式来看 <code>file_to_extents</code> 的过程，首先看一下在 <code>Filer::write_trunc</code> 是如何调用 <code>file_to_extents</code> 的:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// osdc/Filer.cc</span></span><br><span class="line"><span class="comment">// void write_trunc </span></span><br><span class="line">Striper::<span class="built_in">file_to_extents</span>(cct, ino, layout, offset, len, truncate_size, extents);</span><br></pre></td></tr></table></figure>
+
+<p>这里传入的 <code>ino</code> <code>offset</code> 和 <code>len</code> 比较好理解，就是我们要写入的文件的 <code>Inode</code> 号，然后从哪里开始写，要写多长，注意这里因为只是算映射所以是不需要传 <code>bl</code> 也就是真正要写入的数据的。</p>
+<p>接着 <code>truncate_size</code> 和 <code>truncate</code> 写有关所以我们先不过多关心，那么 <code>layout</code> 就是用来辅助我们切分请求的，而 <code>extents</code> 就是我们稍后真正要写入的 <code>ObjectExtent</code> 集合了，定义如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">std::vector&lt;ObjectExtent&gt; extents;</span><br></pre></td></tr></table></figure>
+
+<p><code>ObjectExtent</code> 就是我们对于某一个 <code>object</code> 要写入的条带的集合，定义如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">ObjectExtent</span></span><br><span class="line">&#123;</span><br><span class="line"><span class="keyword">public</span>:</span><br><span class="line">    <span class="type">object_t</span>    oid;       <span class="comment">// object id</span></span><br><span class="line">    <span class="type">uint64_t</span>    objectno;</span><br><span class="line">    <span class="type">uint64_t</span>    offset;    <span class="comment">// in object</span></span><br><span class="line">    <span class="type">uint64_t</span>    length;    <span class="comment">// in object</span></span><br><span class="line">    <span class="type">uint64_t</span>    truncate_size;    <span class="comment">// in object</span></span><br><span class="line"></span><br><span class="line">    <span class="type">object_locator_t</span> oloc;   <span class="comment">// object locator (pool etc)</span></span><br><span class="line"></span><br><span class="line">    std::vector&lt;std::pair&lt;<span class="type">uint64_t</span>,<span class="type">uint64_t</span>&gt; &gt;  buffer_extents;  <span class="comment">// off -&gt; len.  extents in buffer being mapped       (may be fragmented bc of striping!)</span></span><br><span class="line"></span><br><span class="line">    <span class="built_in">ObjectExtent</span>() : <span class="built_in">objectno</span>(<span class="number">0</span>), <span class="built_in">offset</span>(<span class="number">0</span>), <span class="built_in">length</span>(<span class="number">0</span>), <span class="built_in">truncate_size</span>(<span class="number">0</span>) &#123;&#125;</span><br><span class="line">    <span class="built_in">ObjectExtent</span>(<span class="type">object_t</span> o, <span class="type">uint64_t</span> ono, <span class="type">uint64_t</span> off, <span class="type">uint64_t</span> l, <span class="type">uint64_t</span> ts) :</span><br><span class="line">        <span class="built_in">oid</span>(o), <span class="built_in">objectno</span>(ono), <span class="built_in">offset</span>(off), <span class="built_in">length</span>(l), <span class="built_in">truncate_size</span>(ts) &#123; &#125;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>其中我们通过 <code>oid</code> 和 <code>objectno</code> 找到一个 <code>object</code>，而 <code>oid</code> 就是文件的 <code>inode</code> 号。</p>
+<p><code>offset</code> 和 <code>length</code> 则是要写入 <code>object</code> 的这段数据在 <code>object</code> 中的偏移和长度（从上图我们可以看到一段连续的数据按条带写到 <code>object</code> 中实际也是连续的）</p>
+<p><code>buffer_extents</code> 则是要写入 <code>object</code> 的数据在 buffer 中的偏移和长度，这里的 buffer 指的是实际的数据，比如一个刚好写满上图 5 个条带的数据必然会横跨三个条带，这时我们就需要在 <code>buffer_extents</code> 中记录下 buffer 中要写入 <code>object</code> 的两段数据的偏移和各自的长度。</p>
+<p>理解了上述部分以后，我们就实际看一下 <code>file_to_extents</code> 是如何填充 <code>extents</code> 的：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">static</span> <span class="type">void</span> <span class="title">file_to_extents</span><span class="params">(CephContext *cct, <span class="type">inodeno_t</span> ino,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">const</span> <span class="type">file_layout_t</span> *layout,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">uint64_t</span> offset, <span class="type">uint64_t</span> len,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">uint64_t</span> trunc_size,</span></span></span><br><span class="line"><span class="params"><span class="function">        std::vector&lt;ObjectExtent&gt;&amp; extents)</span> </span>&#123;</span><br><span class="line">    <span class="comment">// generate prefix/format</span></span><br><span class="line">    <span class="type">char</span> buf[<span class="number">32</span>];</span><br><span class="line">    <span class="built_in">snprintf</span>(buf, <span class="built_in">sizeof</span>(buf), <span class="string">&quot;%llx.%%08llx&quot;</span>, (<span class="type">long</span> <span class="type">long</span> <span class="type">unsigned</span>)ino);</span><br><span class="line"></span><br><span class="line">    <span class="built_in">file_to_extents</span>(cct, buf, layout, offset, len, trunc_size, extents);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>第一步就是将 <code>ino</code> 写入 <code>buf</code> 然后进入第二个版本的重载：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Striper::file_to_extents</span><span class="params">(CephContext *cct, <span class="type">const</span> <span class="type">char</span> *object_format,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">const</span> <span class="type">file_layout_t</span> *layout,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">uint64_t</span> offset, <span class="type">uint64_t</span> len,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">uint64_t</span> trunc_size,</span></span></span><br><span class="line"><span class="params"><span class="function">        std::vector&lt;ObjectExtent&gt;&amp; extents,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">uint64_t</span> buffer_offset)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    striper::LightweightObjectExtents lightweight_object_extents;</span><br><span class="line">    <span class="built_in">file_to_extents</span>(cct, layout, offset, len, trunc_size, buffer_offset,</span><br><span class="line">            &amp;lightweight_object_extents);</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>这里可以看到又多了一个 <code>LightweightObjectExtents</code>，实际上这个和 <code>ObjectExtent</code> 的区别就是没有 <code>object_locator_t oloc</code>，进入第三个版本的重载：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Striper::file_to_extents</span><span class="params">(</span></span></span><br><span class="line"><span class="params"><span class="function">        CephContext *cct, <span class="type">const</span> <span class="type">file_layout_t</span> *layout, <span class="type">uint64_t</span> offset,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">uint64_t</span> len, <span class="type">uint64_t</span> trunc_size, <span class="type">uint64_t</span> buffer_offset,</span></span></span><br><span class="line"><span class="params"><span class="function">        striper::LightweightObjectExtents* object_extents)</span> </span>&#123;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>首先读一下 <code>layout</code>，<code>object_size</code> 和 <code>stripe_unit</code> 我们刚刚都提到了，<code>stripe_count</code> 实际就是每个 <code>ObjectSet</code> 中包含的 <code>object</code> 数量：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// void Striper::file_to_extents</span></span><br><span class="line">__u32 object_size = layout-&gt;object_size;</span><br><span class="line">__u32 su = layout-&gt;stripe_unit;</span><br><span class="line">__u32 stripe_count = layout-&gt;stripe_count;</span><br></pre></td></tr></table></figure>
+
+<p>如果 <code>stripe_count</code> 为 1 的话切条带就没有意义了，因此我们直接让一个 <code>object</code> 中只包含一个条带即可：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (stripe_count == <span class="number">1</span>) &#123;</span><br><span class="line">    <span class="built_in">ldout</span>(cct, <span class="number">20</span>) &lt;&lt; <span class="string">&quot; sc is one, reset su to os&quot;</span> &lt;&lt; dendl;</span><br><span class="line">    su = object_size;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>接下来就进入到切分的过程，这个过程稍微有点长，其中涉及的变量如下：</p>
+<details class="tag-plugin folding" child="codeblock"><summary><span>Striper::file_to_extents</span></summary><div class="body"><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">uint64_t</span> stripes_per_object = object_size / su;</span><br><span class="line"><span class="type">uint64_t</span> cur = offset;</span><br><span class="line"><span class="type">uint64_t</span> left = len;</span><br><span class="line"></span><br><span class="line"><span class="keyword">while</span> (left &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="comment">// layout into objects</span></span><br><span class="line">    <span class="type">uint64_t</span> blockno = cur / su; <span class="comment">// which block</span></span><br><span class="line">                                 <span class="comment">// which horizontal stripe (Y)</span></span><br><span class="line">    <span class="type">uint64_t</span> stripeno = blockno / stripe_count;</span><br><span class="line">    <span class="comment">// which object in the object set (X)</span></span><br><span class="line">    <span class="type">uint64_t</span> stripepos = blockno % stripe_count;</span><br><span class="line">    <span class="comment">// which object set</span></span><br><span class="line">    <span class="type">uint64_t</span> objectsetno = stripeno / stripes_per_object;</span><br><span class="line">    <span class="comment">// object id</span></span><br><span class="line">    <span class="type">uint64_t</span> objectno = objectsetno * stripe_count + stripepos;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// map range into object</span></span><br><span class="line">    <span class="type">uint64_t</span> block_start = (stripeno % stripes_per_object) * su;</span><br><span class="line">    <span class="type">uint64_t</span> block_off = cur % su;</span><br><span class="line">    <span class="type">uint64_t</span> max = su - block_off;</span><br><span class="line"></span><br><span class="line">    <span class="type">uint64_t</span> x_offset = block_start + block_off;</span><br><span class="line">    <span class="type">uint64_t</span> x_len;</span><br></pre></td></tr></table></figure></div></details>
+
+<p>插入 <code>object_extents</code> 的过程分两种情况，其中 <code>if</code> 分支是插入一个新 <code>LightweightObjectExtent</code>，<code>else</code> 分支则是写满一组条带之后更新 <code>LightweightObjectExtent</code> 的过程</p>
+<p>首先看 <code>if</code> 分支，满足下列条件其中之一的进入此分支：</p>
+<ol>
+<li><code>object_extents</code> 为空</li>
+<li>当前 <code>object_extent</code> 不存在于 <code>object_extents</code> 中</li>
+<li>写入的数据在 <code>object</code> 中不是连续的</li>
+</ol>
+<p> 进入分支以后直接插入一个 <code>LightweightObjectExtent</code> 到 <code>object_extents</code> 即可：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">striper::LightweightObjectExtent* ex = <span class="literal">nullptr</span>;</span><br><span class="line"><span class="keyword">auto</span> it = std::<span class="built_in">upper_bound</span>(object_extents-&gt;<span class="built_in">begin</span>(), object_extents-&gt;<span class="built_in">end</span>(),</span><br><span class="line">        objectno, <span class="built_in">OrderByObject</span>());</span><br><span class="line">striper::<span class="function">LightweightObjectExtents::reverse_iterator <span class="title">rev_it</span><span class="params">(it)</span></span>;</span><br><span class="line"><span class="keyword">if</span> (rev_it == object_extents-&gt;<span class="built_in">rend</span>() ||</span><br><span class="line">        rev_it-&gt;object_no != objectno ||</span><br><span class="line">        rev_it-&gt;offset + rev_it-&gt;length != x_offset) &#123;</span><br><span class="line">    <span class="comment">// expect up to &quot;stripe-width - 1&quot; vector shifts in the worst-case</span></span><br><span class="line">    ex = &amp;(*object_extents-&gt;<span class="built_in">emplace</span>(</span><br><span class="line">                it, objectno, x_offset, x_len,</span><br><span class="line">                <span class="built_in">object_truncate_size</span>(cct, layout, objectno, trunc_size)));</span><br><span class="line">    <span class="built_in">ldout</span>(cct, <span class="number">20</span>) &lt;&lt; <span class="string">&quot; added new &quot;</span> &lt;&lt; *ex &lt;&lt; dendl;</span><br></pre></td></tr></table></figure>
+
+<p>接着 <code>else</code> 分支则是对 <code>LightweightObjectExtent</code> 中的 <code>length</code> 进行更新：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    ex = &amp;(*rev_it);</span><br><span class="line">    <span class="built_in">ceph_assert</span>(ex-&gt;offset + ex-&gt;length == x_offset);</span><br><span class="line"></span><br><span class="line">    <span class="built_in">ldout</span>(cct, <span class="number">20</span>) &lt;&lt; <span class="string">&quot; adding in to &quot;</span> &lt;&lt; *ex &lt;&lt; dendl;</span><br><span class="line">    ex-&gt;length += x_len;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>以上两种情况我们都需要对 <code>buffer_extents</code> 进行更新，插入这段数据在 <code>buffer</code> 中的偏移和长度，并更新下一轮我们待切分的数据长度 <code>left</code> 和已经切分的偏移位置 <code>cur</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">ex-&gt;buffer_extents.<span class="built_in">emplace_back</span>(cur - offset + buffer_offset, x_len);</span><br><span class="line">left -= x_len;</span><br><span class="line">cur += x_len;</span><br></pre></td></tr></table></figure>
+
+<p>全部切分完成并加入 <code>object_extents</code> 之后我们回到第二个版本的 <code>Striper::file_to_extents</code> 中，在这里遍历 <code>lightweight_object_extents</code> 并填入 <code>extents</code>，这里基本上就是原样填充，只多了一步就是算了一下 <code>oloc</code>：</p>
+<details class="tag-plugin folding" child="codeblock"><summary><span>将 LightweightObjectExtent 转换为 ObjectExtent</span></summary><div class="body"><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// convert lightweight object extents to heavyweight version</span></span><br><span class="line">extents.<span class="built_in">reserve</span>(lightweight_object_extents.<span class="built_in">size</span>());</span><br><span class="line"><span class="keyword">for</span> (<span class="keyword">auto</span>&amp; lightweight_object_extent : lightweight_object_extents) &#123;</span><br><span class="line">    <span class="keyword">auto</span>&amp; object_extent = extents.<span class="built_in">emplace_back</span>(</span><br><span class="line">            <span class="built_in">object_t</span>(format_oid(object_format, lightweight_object_extent.object_no)),</span><br><span class="line">            lightweight_object_extent.object_no,</span><br><span class="line">            lightweight_object_extent.offset, lightweight_object_extent.length,</span><br><span class="line">            lightweight_object_extent.truncate_size);</span><br><span class="line"></span><br><span class="line">    object_extent.oloc = OSDMap::<span class="built_in">file_to_object_locator</span>(*layout);</span><br><span class="line">    object_extent.buffer_extents.<span class="built_in">reserve</span>(</span><br><span class="line">            lightweight_object_extent.buffer_extents.<span class="built_in">size</span>());</span><br><span class="line">    object_extent.buffer_extents.<span class="built_in">insert</span>(</span><br><span class="line">            object_extent.buffer_extents.<span class="built_in">end</span>(),</span><br><span class="line">            lightweight_object_extent.buffer_extents.<span class="built_in">begin</span>(),</span><br><span class="line">            lightweight_object_extent.buffer_extents.<span class="built_in">end</span>());</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></div></details>
+
+<p>以上就是关于 Ceph 条带化的介绍和 <code>Striper::file_to_extents</code> 的全部过程。</p>
+<h2 id="References"><a href="#References" class="headerlink" title="References"></a>References</h2><ul>
+<li><a target="_blank" rel="noopener" href="https://docs.ceph.com/en/latest/architecture/">Ceph Architecture</a></li>
+<li><a target="_blank" rel="noopener" href="https://ivanzz1001.github.io/records/post/ceph/2019/01/05/ceph-src-code-part5_2">Ceph 客户端</a></li>
+</ul>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"></div><div class="item" id="next"><div class="note">较早文章</div><a href="/posts/3535257457/">Ceph 挂载点压缩提示 File changed as we read it 问题分析</a></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
