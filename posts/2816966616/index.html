@@ -23,7 +23,7 @@
   <title>Ceph 读写流程：file_to_extents 过程分析 - Mer's Blog</title>
 
   
-  <meta name="description" content="本文对 Ceph 中 Striper::file_to_extents 的流程进行分析和总结。">
+  <meta name="description" content="本文介绍 Ceph 中条带化的相关概念并对 Striper::file_to_extents 的流程进行了分析和总结。">
 
   <!-- feed -->
   
@@ -93,7 +93,7 @@
 
 <article class='md-text content post'>
 <h1 class="article-title"><span>Ceph 读写流程：file_to_extents 过程分析</span></h1>
-<p>本文对 Ceph 中 <code>Striper::file_to_extents</code> 的流程进行分析和总结。</p>
+<p>本文介绍 Ceph 中条带化的相关概念并对 <code>Striper::file_to_extents</code> 的流程进行了分析和总结。</p>
 <span id="more"></span>
 
 <p>在 <code>Client::_write</code> 中客户端通过 <code>filer-&gt;write_trunc</code> 对文件进行写入，<code>write_trunc</code> 其中分为两步:</p>
