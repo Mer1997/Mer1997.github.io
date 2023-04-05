@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>Paxos 算法以及 Ceph 实现 - Mer's Blog</title>
+
+  
+  <meta name="description" content="本文包含 Paxos、Multi-Paxos 算法的原理以及 Ceph 中对 Paxos 算法的实现。">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+<widget class="widget-wrapper toc single" id="data-toc"><div class="widget-header cap dis-select"><span class="name">Paxos 算法以及 Ceph 实现</span></div><div class="widget-body fs14"><div class="doc-tree active"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#Basic-Paxos-%E5%92%8C-Multi-Paxos"><span class="toc-text">Basic Paxos 和 Multi-Paxos</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E4%B8%AA%E5%8F%AF%E8%83%BD%E7%9A%84-Paxos-%E8%BF%90%E8%A1%8C%E8%BF%87%E7%A8%8B"><span class="toc-text">一个可能的 Paxos 运行过程</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Ceph-%E4%B8%AD%E7%9A%84-Paxos-%E7%AE%97%E6%B3%95%E5%AE%9E%E7%8E%B0"><span class="toc-text">Ceph 中的 Paxos 算法实现</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Probe-%E9%98%B6%E6%AE%B5"><span class="toc-text">Probe 阶段</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Election-%E9%80%89%E4%B8%BE"><span class="toc-text">Election 选举</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Recovery-%E9%98%B6%E6%AE%B5"><span class="toc-text">Recovery 阶段</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Propose-%E6%8F%90%E6%A1%88"><span class="toc-text">Propose 提案</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#References"><span class="toc-text">References</span></a></li></ol></div></div></widget>
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2023-04-05T14:57:58.000Z">2023-04-05</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>Paxos 算法以及 Ceph 实现</span></h1>
+<p>本文包含 Paxos、Multi-Paxos 算法的原理以及 Ceph 中对 Paxos 算法的实现。</p>
+<span id="more"></span>
+
+<h2 id="Basic-Paxos-和-Multi-Paxos"><a href="#Basic-Paxos-和-Multi-Paxos" class="headerlink" title="Basic Paxos 和 Multi-Paxos"></a>Basic Paxos 和 Multi-Paxos</h2><p>Paxos 和 raft 算法看过不少次，但是始终属于一知半解，也没有个记录，这次把 Paxos 和 Multi-Paxos 的原理和 ceph 中 Paxos 的实现都记录一下：</p>
+<p>首先是 Paxos 算法，朴素的 Paxos 算法是不包含 leader 角色的：</p>
+<ul>
+<li>proposer (提议者): 提出提案，包含提案编号（proposal ID）和一个要协商的值（Val）</li>
+<li>acceptor (决策者)：参与决策，回应收到的来自 proposer 的提案，当多数 acceptor 赞成时提案通过，一般来说一个 proposer 同时也是一个 acceptor</li>
+</ul>
+<p>Basic Paxos 算法通过两阶段通过一个决议：</p>
+<ol>
+<li>proposer 向 acceptors 发起 prepare 提案，这时 acceptors 会根据自身情况对提案进行回复，可以选择接受（promise）或者拒绝（可以沉默，也可以告知）</li>
+<li>proposer 得知多数 acceptor (quorum) 表示接受并承诺了这个提案，那么就会正式向 acceptors 发送 propose 请求，acceptor 会对收到的提案进行 accpet 处理</li>
+</ol>
+<p>对于 prepare 消息和 promise 消息的描述如下：</p>
+<ol>
+<li>prepare 消息不需要携带提案内容，只需要携带全局唯一的 proposal ID 即可（比如时间戳 + rank 号）</li>
+<li>promise 请求由 acceptor 回复给 proposer，携带自身已经接受的提案中 proposal ID 最大的提案的 ID 和 Val，如果此前没有接受过提案则返回空值</li>
+</ol>
+<p>另外如果 acceptor 在 prepare 阶段接受了一个 proposal 提案，那么 acceptor 需要做出两个承诺：</p>
+<ol>
+<li>不再接受 proposal ID 小于等于当前请求的 prepare 请求</li>
+<li>不再接受 proposal ID 小于当前请求的 propose 请求</li>
+</ol>
+<p>proposer 在接收到 quorum 中 acceptor 的回应后，从中选出 proposal ID 最大的提案的 Val 作为本次要发起的提案，如果所有 acceptor 的回复均是空值，那么就可以自己随意决定提案 Val<br>acceptor 收到正式提案处理时接受并持久化当前的 proposal ID 和提案 Val</p>
+<p>上述整体过程如下图所示：<br><img class="lazy" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAABGdBTUEAALGPC/xhBQAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAADa6r/EAAAAC0lEQVQIHWNgAAIAAAUAAY27m/MAAAAASUVORK5CYII=" data-src="/images/Paxos-%E7%AE%97%E6%B3%95%E4%BB%A5%E5%8F%8A-Ceph-%E5%AE%9E%E7%8E%B0/Basic-Paxos.png" alt="Basic Paxos"></p>
+<p>注意一旦一个提案被多数 acceptor 接受（即形成决议）之后不会再被推翻，也就是说此后包含其他值的提案都不会再被接受了（即使新的提案拥有更大的 proposal ID）</p>
+<p>理解 Basic Paxos 算法，最重要的一点是牢记 Basic Paxos 属于共识算法，它唯一的作用就是保证多个节点对某个值达成共识，更新这个值并不是 Basic Paxos 的任务。</p>
+<p>Basic Paxos 具有的问题：</p>
+<ol>
+<li>开销大（一次决议需要至少两次网络通信）</li>
+<li>可能形成活锁</li>
+<li>无法确定多个值</li>
+</ol>
+<p>Multi-Paxos 相比于 Basic Paxos 的改进：</p>
+<ol>
+<li>针对每个要确定的值执行一次 Paxos，多个 Paxos 实例之间使用 Instance ID 作为区分</li>
+<li>引入 leader 的概念，只有 leader 可以提交 proposal，这样以来由于没有 proposer 竞争，一方面解决了活锁问题，另一方面也不需要 prepare，从而将两阶段提交改进为一阶段提交，降低了开销</li>
+</ol>
+<p>选举 leader 的过程同样是一次决议的形成（当然也可以通过其他方式）。</p>
+<p>如果多个（自认为是） leader 节点提交 proposal 那么将退化成 Basic Paxos，但不会导致不安全（相当于多个 proposer 同时提交 proposal）.</p>
+<h2 id="一个可能的-Paxos-运行过程"><a href="#一个可能的-Paxos-运行过程" class="headerlink" title="一个可能的 Paxos 运行过程"></a>一个可能的 Paxos 运行过程</h2><p>了解了以上内容之后，这里接着给出一个可能的，当前一个 leader 发生故障而新的 leader 被选举出来之后发生的事情（取自 Paxos Made Simple）：</p>
+<blockquote>
+<p>这个新的 leader 也是这个一致性算法的所有实例中的学习者，它应该知道大多数已经被选定的命令。假设它知道 1-134、138 以及 139 号命令，也就是一致性算法的 1-134、138 以及 139 号实例的值。（我们稍后将会看到命令序列中的这样一个空缺是如何产生的。）然后它执行实例135-137以及所有大于139的实例的阶段1，假设这些执行的结果只确定了实例 135 和 140 中提议的值，但是其他实例中没有提议值的约束14。leader 执行实例 135 和 140 的阶段2，并因此可以选定 135 和 140 号命令。</p>
+<p>leader 自身就像其他向 leader 学习 leader 所知道的所有命令的别的服务器一样，现在可以运行命令 1-135。因为136号和137号命令还没有选定，所以它还不能运行 138-140 号命令，尽管它知道 138-140 号命令。于是，我们让它通过提议将一个特殊的不会导致状态机状态切换的“no-op”命令作为第136号和137号命令（它可以通过执行一致性算法的 136 号和 137 号实例的阶段 2 来完成），以此快速填补空缺。一旦这些 no-op 命令被选定，那 138-140 号命令就可以被执行了。</p>
+<p>现在从 1 到 140 的命令都被选定了。 leader 完成了一致性算法中大于 140 的所有实例的阶段 1，它可以在这些（完成阶段1的）实例的阶段2中自由地提议任意的值。它给某个客户端请求的下一个命令分配了 141 号命令，把它作为这个一致性算法的 141 号实例的阶段2提议的值。它接着将它收到的下一个客户端命令提议为第 142 号命令，以此类推。</p>
+<p>leader 可以在它获知它提议的 141 号命令已被选定之前提议 142 号命令。它在提议第 141 号命令中发送的所有消息有可能丢失，而第 142 号命令会在其他服务器获知到 leader 提议的第 141 号命令之前被选定。当 leader 在实例 141 中没有收到对它的阶段2的预期响应时，它将会重发这些消息。如果一切顺利，它提议的命令会被选定。无论如何，它还是有可能在前面有失败，在选定的命令的序列上留下一段空缺。一般来说，假设一个 leader 可以提前获得 α 个命令——也就意味着，它可以在 1 到 i 号命令被选定之后提议第 i + 1 到 i + α 号命令。一个多达 α - 1 个命令的空缺可能随之形成。</p>
+<p>一个新的被选定的 leader 执行一致性算法中的无限多的实例的阶段1——如果是在上面的场景中，就是实例 135-137，以及所有大于139的实例。让所有实例使用一样的提案编号，它可以通过向其他的服务器发送一个合理的短消息来实现这一点。在阶段1中，接受者当且仅当它已经收到了某个提议者的阶段2的消息的时候，它才会响应不止1个简单的OK。（在这个场景里，这是仅针对实例 135 和 140 的例子。）所以，一个（扮演接受者的）服务器可以用一个单一且合理短的消息回应所有的实例。因此，执行阶段1的无穷多个实例不会带来任何问题。</p>
+<p>由于 leader 的故障以及新 leader 的选举理应很少发生，因此执行状态机命令——对命令&#x2F;值达成一致的过程的有效成本，仅为运行这个一致性算法的阶段2的成本。可以看出，Paxos 一致性算法的第2阶段在存在故障的情况下，其达成协议的可能代价是所有算法中最小的。于是，Paxos 算法本质上是最优的。</p>
+</blockquote>
+<h2 id="Ceph-中的-Paxos-算法实现"><a href="#Ceph-中的-Paxos-算法实现" class="headerlink" title="Ceph 中的 Paxos 算法实现"></a>Ceph 中的 Paxos 算法实现</h2><p>通过上述章节我们基本了解了 Basic Paxos 和 Multi-Paxos 的基本运行方式，这一部分就来看一下 Ceph 中对于 Paxos 算法的实现和使用方式（Multi-Paxos 并没有具体的实现细节，所以 Ceph 中的只是其中一种实现方式）。</p>
+<p>首先 Ceph 中的 Paxos (指 Multi-Paxos，下同) 在 Monitor 中实现，用于维护 monmap、osdmap、mdsmap、pgmap 等各种 map</p>
+<p>在 Mon 启动时会初始化 Paxos（在 <code>Monitor::init_paxos</code> 中）：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Paxos::init</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="comment">// load paxos variables from stable storage</span></span><br><span class="line">    last_pn = <span class="built_in">get_store</span>()-&gt;<span class="built_in">get</span>(<span class="built_in">get_name</span>(), <span class="string">&quot;last_pn&quot;</span>);</span><br><span class="line">    accepted_pn = <span class="built_in">get_store</span>()-&gt;<span class="built_in">get</span>(<span class="built_in">get_name</span>(), <span class="string">&quot;accepted_pn&quot;</span>);</span><br><span class="line">    last_committed = <span class="built_in">get_store</span>()-&gt;<span class="built_in">get</span>(<span class="built_in">get_name</span>(), <span class="string">&quot;last_committed&quot;</span>);</span><br><span class="line">    first_committed = <span class="built_in">get_store</span>()-&gt;<span class="built_in">get</span>(<span class="built_in">get_name</span>(), <span class="string">&quot;first_committed&quot;</span>);</span><br><span class="line"></span><br><span class="line">    <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; __func__ &lt;&lt; <span class="string">&quot; last_pn: &quot;</span> &lt;&lt; last_pn &lt;&lt; <span class="string">&quot; accepted_pn: &quot;</span></span><br><span class="line">        &lt;&lt; accepted_pn &lt;&lt; <span class="string">&quot; last_committed: &quot;</span> &lt;&lt; last_committed</span><br><span class="line">        &lt;&lt; <span class="string">&quot; first_committed: &quot;</span> &lt;&lt; first_committed &lt;&lt; dendl;</span><br><span class="line"></span><br><span class="line">    <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot;init&quot;</span> &lt;&lt; dendl;</span><br><span class="line">    <span class="built_in">ceph_assert</span>(<span class="built_in">is_consistent</span>());</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里从存储中获取已经被持久化的 <code>last-pn</code>、<code>accpeted_pn</code>、<code>last_committed</code> 和 <code>first_committed</code>， 其中 pn 就是 proposal num 也就是提案编号， committed 则是记录已提交的版本也就是已经达成决议的 Paxos 实例号</p>
+<h3 id="Probe-阶段"><a href="#Probe-阶段" class="headerlink" title="Probe 阶段"></a>Probe 阶段</h3><p>接着 Mon 会将自己的状态置为 <code>STATE_PROBING</code>，开始 <code>bootstrap</code> 以发现集群并同步数据:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">state = STATE_PROBING;</span><br><span class="line"><span class="built_in">bootstrap</span>();</span><br></pre></td></tr></table></figure>
+<p>首先将自己加入一个外部的多数派集合（也就是首先默认自己不在当前集群 quorum，因为还没有同步数据）:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// i&#x27;m outside the quorum</span></span><br><span class="line"><span class="keyword">if</span> (monmap-&gt;<span class="built_in">contains</span>(name))</span><br><span class="line">    outside_quorum.<span class="built_in">insert</span>(name);</span><br></pre></td></tr></table></figure>
+
+<p>接着向其他所有已知的 Mon 发送 <code>MMonProbe</code> 消息，其他 Mon 接到消息后进入 <code>Monitor::handle_probe_probe</code> 处理，这里有两种情况，正常情况下收到请求的 Mon 会向请求方返回应答，包括 leadr、 quorum 成员列表以及当前节点的 <code>first_committed</code> 和 <code>last_committed</code>，另一种情况则是发现请求方的 paxos 状态反而远新于自身，那么就会主动使当前节点 <code>re-boostrap</code> 重新同步。</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!<span class="built_in">is_probing</span>() &amp;&amp; !<span class="built_in">is_synchronizing</span>()) &#123;</span><br><span class="line">    <span class="comment">// If the probing mon is way ahead of us, we need to re-bootstrap.</span></span><br><span class="line">    <span class="comment">// Normally we capture this case when we initially bootstrap, but</span></span><br><span class="line">    <span class="comment">// it is possible we pass those checks (we overlap with</span></span><br><span class="line">    <span class="comment">// quorum-to-be) but fail to join a quorum before it moves past</span></span><br><span class="line">    <span class="comment">// us.  We need to be kicked back to bootstrap so we can</span></span><br><span class="line">    <span class="comment">// synchonize, not keep calling elections.</span></span><br><span class="line">    <span class="keyword">if</span> (paxos-&gt;<span class="built_in">get_version</span>() + <span class="number">1</span> &lt; m-&gt;paxos_first_version) &#123;</span><br><span class="line">        <span class="built_in">dout</span>(<span class="number">1</span>) &lt;&lt; <span class="string">&quot; peer &quot;</span> &lt;&lt; m-&gt;<span class="built_in">get_source_addr</span>() &lt;&lt; <span class="string">&quot; has first_committed &quot;</span></span><br><span class="line">            &lt;&lt; <span class="string">&quot;ahead of us, re-bootstrapping&quot;</span> &lt;&lt; dendl;</span><br><span class="line">        <span class="built_in">bootstrap</span>();</span><br><span class="line">        <span class="keyword">goto</span> out;</span><br><span class="line"></span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>接着回到刚启动的 Mon 通过 <code>Monitor::handle_probe_reply</code> 处理其他 Mon 的回复，同样会对其他 Mon 的 committed version 进行检查，如果中间有空隙或者需要版本差别太远那么就需要从其他 Mon 全量复制：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">   <span class="keyword">if</span> (paxos-&gt;<span class="built_in">get_version</span>() &lt; m-&gt;paxos_first_version &amp;&amp;</span><br><span class="line">m-&gt;paxos_first_version &gt; <span class="number">1</span>) &#123;  <span class="comment">// no need to sync if we&#x27;re 0 and they start at 1.</span></span><br><span class="line">     <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot; peer paxos first versions [&quot;</span> &lt;&lt; m-&gt;paxos_first_version</span><br><span class="line">       &lt;&lt; <span class="string">&quot;,&quot;</span> &lt;&lt; m-&gt;paxos_last_version &lt;&lt; <span class="string">&quot;]&quot;</span></span><br><span class="line">       &lt;&lt; <span class="string">&quot; vs my version &quot;</span> &lt;&lt; paxos-&gt;<span class="built_in">get_version</span>()</span><br><span class="line">       &lt;&lt; <span class="string">&quot; (too far ahead)&quot;</span></span><br><span class="line">       &lt;&lt; dendl;</span><br><span class="line">     <span class="built_in">cancel_probe_timeout</span>();</span><br><span class="line">     <span class="built_in">sync_start</span>(other, <span class="literal">true</span>);</span><br><span class="line">     <span class="keyword">return</span>;</span><br><span class="line">   &#125;</span><br><span class="line">   <span class="keyword">if</span> (paxos-&gt;<span class="built_in">get_version</span>() + <span class="built_in">g_conf</span>()-&gt;paxos_max_join_drift &lt; m-&gt;paxos_last_version) &#123;</span><br><span class="line">     <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot; peer paxos last version &quot;</span> &lt;&lt; m-&gt;paxos_last_version</span><br><span class="line">       &lt;&lt; <span class="string">&quot; vs my version &quot;</span> &lt;&lt; paxos-&gt;<span class="built_in">get_version</span>()</span><br><span class="line">       &lt;&lt; <span class="string">&quot; (too far ahead)&quot;</span></span><br><span class="line">       &lt;&lt; dendl;</span><br><span class="line">     <span class="built_in">cancel_probe_timeout</span>();</span><br><span class="line">     <span class="built_in">sync_start</span>(other, <span class="literal">false</span>);</span><br><span class="line">     <span class="keyword">return</span>;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>除此以外暂时先不用立刻同步到最新版本，此时如果对方处于 quorum 中并且自身在 <code>monmap</code> 中那么就可以通过 <code>start_election</code> 加入 <code>quorum</code>:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (m-&gt;quorum.<span class="built_in">size</span>()) &#123;</span><br><span class="line">    <span class="type">bool</span> in_map = <span class="literal">false</span>;</span><br><span class="line">    <span class="type">const</span> <span class="keyword">auto</span> my_info = monmap-&gt;mon_info.<span class="built_in">find</span>(name);</span><br><span class="line">    <span class="type">const</span> map&lt;string,string&gt; *map_crush_loc&#123;<span class="literal">nullptr</span>&#125;;</span><br><span class="line">    <span class="keyword">if</span> (my_info != monmap-&gt;mon_info.<span class="built_in">end</span>()) &#123;</span><br><span class="line">        in_map = <span class="literal">true</span>;</span><br><span class="line">        map_crush_loc = &amp;my_info-&gt;second.crush_loc;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (in_map &amp;&amp;</span><br><span class="line">            !monmap-&gt;<span class="built_in">get_addrs</span>(name).<span class="built_in">front</span>().<span class="built_in">is_blank_ip</span>() &amp;&amp;</span><br><span class="line">            (!need_set_crush_loc || (*map_crush_loc == crush_loc))) &#123;</span><br><span class="line">        <span class="comment">// i&#x27;m part of the cluster; just initiate a new election</span></span><br><span class="line">        <span class="built_in">start_election</span>();</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<p>或者发现不在 <code>quorum</code> 中的 mon 数量已经超过了半数，那么就可以通过选举来形成一个新的多数派：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (monmap-&gt;<span class="built_in">contains</span>(m-&gt;name)) &#123;</span><br><span class="line">    <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot; mon.&quot;</span> &lt;&lt; m-&gt;name &lt;&lt; <span class="string">&quot; is outside the quorum&quot;</span> &lt;&lt; dendl;</span><br><span class="line">    outside_quorum.<span class="built_in">insert</span>(m-&gt;name);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">unsigned</span> need = monmap-&gt;<span class="built_in">min_quorum_size</span>();</span><br><span class="line"><span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot; outside_quorum now &quot;</span> &lt;&lt; outside_quorum &lt;&lt; <span class="string">&quot;, need &quot;</span> &lt;&lt; need &lt;&lt; dendl;</span><br><span class="line"><span class="keyword">if</span> (outside_quorum.<span class="built_in">size</span>() &gt;= need) &#123;</span><br><span class="line">    <span class="keyword">if</span> (outside_quorum.<span class="built_in">count</span>(name)) &#123;</span><br><span class="line">        <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot; that&#x27;s enough to form a new quorum, calling election&quot;</span> &lt;&lt; dendl;</span><br><span class="line">        <span class="built_in">start_election</span>();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="Election-选举"><a href="#Election-选举" class="headerlink" title="Election 选举"></a>Election 选举</h3><p>选举阶段通过 <code>Monitor::start_election</code> 开始：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Monitor::start_election</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">  <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot;start_election&quot;</span> &lt;&lt; dendl;</span><br><span class="line">  state = STATE_ELECTING;</span><br><span class="line">  ...</span><br><span class="line">  elector.<span class="built_in">call_election</span>();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>进入到 <code>ElectionLogic::start</code> 中，Mon 通过 <code>epoch</code> 的奇偶性判断当前 Mon 是否处于选举状态，如果 <code>epoch</code> 是偶数即稳定态，则需要使 <code>epoch</code> 加一进入选举态：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (epoch % <span class="number">2</span> == <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="built_in">bump_epoch</span>(epoch+<span class="number">1</span>);  <span class="comment">// odd == election cycle</span></span><br></pre></td></tr></table></figure>
+
+<p>接着在 <code>Elector::propose_to_peers</code> 中向 <code>monmap</code> 中的其他 Mon 发送 <code>MMonElection::OP_PROPOSE</code> 消息：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Elector::propose_to_peers</span><span class="params">(<span class="type">epoch_t</span> e, bufferlist&amp; logic_bl)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="comment">// bcast to everyone else</span></span><br><span class="line">    <span class="keyword">for</span> (<span class="type">unsigned</span> i=<span class="number">0</span>; i&lt;mon-&gt;monmap-&gt;<span class="built_in">size</span>(); ++i) &#123;</span><br><span class="line">        <span class="keyword">if</span> ((<span class="type">int</span>)i == mon-&gt;rank) <span class="keyword">continue</span>;</span><br><span class="line">        MMonElection *m =</span><br><span class="line">            <span class="keyword">new</span> <span class="built_in">MMonElection</span>(MMonElection::OP_PROPOSE, e,</span><br><span class="line">                    peer_tracker.<span class="built_in">get_encoded_bl</span>(),</span><br><span class="line">                    logic.strategy, mon-&gt;monmap);</span><br><span class="line">        m-&gt;sharing_bl = logic_bl;</span><br><span class="line">        m-&gt;mon_features = ceph::features::mon::<span class="built_in">get_supported</span>();</span><br><span class="line">        m-&gt;mon_release = <span class="built_in">ceph_release</span>();</span><br><span class="line">        mon-&gt;<span class="built_in">send_mon_message</span>(m, i);</span><br><span class="line">    &#125;  </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>那么其他 Mon 在收到 <code>MMonElection::OP_PROPOSE</code> 后进入 <code>Elector::handle_propose</code> 处理，这里如果不满足一些条件的话会向请求客户端发一个 <code>MMonElection::OP_NAK</code> 消息，接着进入 <code>ElectionLogic::receive_propose</code> 中，这里对于不同的 <code>strategy</code> 设置进入不同的处理流程，在 <code>CLASSIC</code> 也就是默认策略下 Ceph 会人为制造 Mon 直接地位的不平等，也就是 <code>rank</code> 号越小的 Mon 越能赢得选举，那么如果对方的 <code>rank</code> 号比自己小的话就会通过 <code>defer</code> 赞成对方，同样的如果对方 <code>rank</code> 比自己还大，但自己又没有在选举状态的话那么就会发起一个新的选举尝试：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (elector-&gt;<span class="built_in">get_my_rank</span>() &lt; from) &#123;</span><br><span class="line">    <span class="comment">// i would win over them.</span></span><br><span class="line">    <span class="keyword">if</span> (leader_acked &gt;= <span class="number">0</span>) &#123;        <span class="comment">// we already acked someone</span></span><br><span class="line">        <span class="built_in">ceph_assert</span>(leader_acked &lt; from);  <span class="comment">// and they still win, of course</span></span><br><span class="line">        <span class="built_in">ldout</span>(cct, <span class="number">5</span>) &lt;&lt; <span class="string">&quot;no, we already acked &quot;</span> &lt;&lt; leader_acked &lt;&lt; dendl;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">// wait, i should win!</span></span><br><span class="line">        <span class="keyword">if</span> (!electing_me) &#123;</span><br><span class="line">            elector-&gt;<span class="built_in">trigger_new_election</span>();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="comment">// they would win over me</span></span><br><span class="line">    <span class="keyword">if</span> (leader_acked &lt; <span class="number">0</span> || <span class="comment">// haven&#x27;t acked anyone yet, or</span></span><br><span class="line">            leader_acked &gt; from ||   <span class="comment">// they would win over who you did ack, or</span></span><br><span class="line">            leader_acked == from) &#123;  <span class="comment">// this is the guy we&#x27;re already deferring to</span></span><br><span class="line">        <span class="built_in">defer</span>(from);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">// ignore them!</span></span><br><span class="line">        <span class="built_in">ldout</span>(cct, <span class="number">5</span>) &lt;&lt; <span class="string">&quot;no, we already acked &quot;</span> &lt;&lt; leader_acked &lt;&lt; dendl;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>ElectionLogic::defer</code> 中会记录自己已经响应过的 Mon，如果新的 Propose 请求的 <code>rank</code> 小于自己曾经回应过的 Mon 才会回应，否则的话直接忽略掉。</p>
+<p>当 Mon 收到 <code>MMonElection::OP_ACK</code> 回复后进入 <code>Elector::handle_ack</code> 处理，首先将对方加入 <code>acked_me</code> 中，如果所有人都承认自己的话宣布胜利，也就是 Paxos 的第二阶段，向其他 Mon 发送 <code>MMonElection::OP_VICTORY</code> 消息：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">ElectionLogic::receive_ack</span><span class="params">(<span class="type">int</span> from, <span class="type">epoch_t</span> from_epoch)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ...</span><br><span class="line">    acked_me.<span class="built_in">insert</span>(from);</span><br><span class="line">    <span class="keyword">if</span> (acked_me.<span class="built_in">size</span>() == elector-&gt;<span class="built_in">paxos_size</span>()) &#123;</span><br><span class="line">        <span class="comment">// if yes, shortcut to election finish</span></span><br><span class="line">        <span class="built_in">declare_victory</span>();</span><br><span class="line">    &#125;</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">Elector::message_victory</span><span class="params">(<span class="type">const</span> std::set&lt;<span class="type">int</span>&gt;&amp; quorum)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ...</span><br><span class="line">    <span class="comment">// tell everyone!</span></span><br><span class="line">    <span class="keyword">for</span> (set&lt;<span class="type">int</span>&gt;::iterator p = quorum.<span class="built_in">begin</span>(); p != quorum.<span class="built_in">end</span>(); ++p) &#123;</span><br><span class="line">        <span class="keyword">if</span> (*p == mon-&gt;rank) <span class="keyword">continue</span>;</span><br><span class="line">        MMonElection *m = <span class="keyword">new</span> <span class="built_in">MMonElection</span>(MMonElection::OP_VICTORY, <span class="built_in">get_epoch</span>(),</span><br><span class="line">                peer_tracker.<span class="built_in">get_encoded_bl</span>(),</span><br><span class="line">                logic.strategy, mon-&gt;monmap);</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>那如果在一定时间内没有收到所有人的回复的话，那么按照 Paxos 的规则只要大多数也就是过半的 Mon 表示同意的话也能形成 quorum，此时同样可以宣布选举胜利：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">ElectionLogic::end_election_period</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="built_in">ldout</span>(cct, <span class="number">5</span>) &lt;&lt; <span class="string">&quot;election period ended&quot;</span> &lt;&lt; dendl;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// did i win?</span></span><br><span class="line">    <span class="keyword">if</span> (electing_me &amp;&amp;</span><br><span class="line">            acked_me.<span class="built_in">size</span>() &gt; (elector-&gt;<span class="built_in">paxos_size</span>() / <span class="number">2</span>)) &#123;</span><br><span class="line">        <span class="comment">// i win</span></span><br><span class="line">        <span class="built_in">declare_victory</span>();</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>那么宣布胜利之后 Mon 就会把自己的状态设为 <code>STATE_LEADER</code> (这个过程在 <code>Monitor::win_election</code> 中完成)，其他成员则把自己设为 <code>STATE_PEON</code></p>
+<h3 id="Recovery-阶段"><a href="#Recovery-阶段" class="headerlink" title="Recovery 阶段"></a>Recovery 阶段</h3><p>之前提到选举之前如果自己记录的 Propose 有部分缺失的话是不需要立刻恢复的，那么这里成为 leader 之后就要开始 Paxos Recovery 了，也就是之前示例中填补空洞的过程，在 <code>Monitor::win_election</code> 中调用 <code>Paxos::leader_init</code> 开始：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Monitor::win_election</span><span class="params">(<span class="type">epoch_t</span> epoch, <span class="type">const</span> set&lt;<span class="type">int</span>&gt;&amp; active, <span class="type">uint64_t</span> features,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">const</span> <span class="type">mon_feature_t</span>&amp; mon_features,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">ceph_release_t</span> min_mon_release,</span></span></span><br><span class="line"><span class="params"><span class="function">        <span class="type">const</span> map&lt;<span class="type">int</span>,Metadata&gt;&amp; metadata)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ...</span><br><span class="line">    paxos-&gt;<span class="built_in">leader_init</span>();</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">Paxos::leader_init</span><span class="params">()</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="built_in">cancel_events</span>();</span><br><span class="line">    new_value.<span class="built_in">clear</span>();</span><br><span class="line"></span><br><span class="line">    <span class="comment">// discard pending transaction</span></span><br><span class="line">    pending_proposal.<span class="built_in">reset</span>();</span><br><span class="line"></span><br><span class="line">    <span class="built_in">reset_pending_committing_finishers</span>();</span><br><span class="line"></span><br><span class="line">    logger-&gt;<span class="built_in">inc</span>(l_paxos_start_leader);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (mon.<span class="built_in">get_quorum</span>().<span class="built_in">size</span>() == <span class="number">1</span>) &#123;</span><br><span class="line">        state = STATE_ACTIVE;</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    state = STATE_RECOVERING;</span><br><span class="line">    lease_expire = &#123;&#125;;</span><br><span class="line">    <span class="built_in">dout</span>(<span class="number">10</span>) &lt;&lt; <span class="string">&quot;leader_init -- starting paxos recovery&quot;</span> &lt;&lt; dendl;</span><br><span class="line">    <span class="built_in">collect</span>(<span class="number">0</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>未完待续</p>
+<h3 id="Propose-提案"><a href="#Propose-提案" class="headerlink" title="Propose 提案"></a>Propose 提案</h3><p>未完待续</p>
+<h2 id="References"><a href="#References" class="headerlink" title="References"></a>References</h2><ul>
+<li><a target="_blank" rel="noopener" href="https://blog.hackerpie.com/posts/2020/paxos-made-simple-translation">《Paxos Made Simple》中文翻译：Paxos 如此简单</a></li>
+<li><a target="_blank" rel="noopener" href="https://zhuanlan.zhihu.com/p/31780743">Paxos算法详解</a></li>
+<li><a target="_blank" rel="noopener" href="https://ongardie.net/static/raft/userstudy/paxos.pdf">Implementing Replicated Logs with Paxos</a></li>
+<li><a target="_blank" rel="noopener" href="https://zhuanlan.zhihu.com/p/408735316">Paxos 结合ceph实现</a></li>
+<li><a target="_blank" rel="noopener" href="https://bean-li.github.io/ceph-mon-election/">ceph-mon的Leader Elect机制</a></li>
+<li><a target="_blank" rel="noopener" href="https://blog.csdn.net/weixin_34388207/article/details/90556344">ceph monitor paxos的实现(一)</a></li>
+</ul>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"></div><div class="item" id="next"><div class="note">较早文章</div><a href="/posts/748254147/">Ceph 读写流程：客户端写流程分析</a></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
