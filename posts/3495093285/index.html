@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>Ceph MDS InodeTable 分配流程和故障分析 - Mer's Blog</title>
+
+  
+  <meta name="description" content="本文对 Ceph 中 inode 分配流程进行了总结，并解释了 MDS 重启过程中可能遇到的一个故障">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+<widget class="widget-wrapper toc single" id="data-toc"><div class="widget-header cap dis-select"><span class="name">Ceph MDS InodeTable 分配流程和故障分析</span></div><div class="widget-body fs14"><div class="doc-tree active"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#inode-%E5%88%86%E9%85%8D%E6%B5%81%E7%A8%8B"><span class="toc-text">inode 分配流程</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#MDS-%E9%87%8D%E5%90%AF%E6%95%85%E9%9A%9C"><span class="toc-text">MDS 重启故障</span></a></li></ol></div></div></widget>
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2023-04-14T00:33:43.000Z">2023-04-14</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>Ceph MDS InodeTable 分配流程和故障分析</span></h1>
+<p>本文对 Ceph 中 <code>inode</code> 分配流程进行了总结，并解释了 MDS 重启过程中可能遇到的一个故障</p>
+<span id="more"></span>
+
+<h2 id="inode-分配流程"><a href="#inode-分配流程" class="headerlink" title="inode 分配流程"></a>inode 分配流程</h2><p>在 Ceph 中我们创建目录、文件、软链接时都需要为其分配一个 <code>inode</code> 作为唯一标识，这一分配过程在 <code>Server::prepare_new_inode</code> 中完成，而分配的依据，也就是哪些 <code>inode</code> 还没有被分配，哪些<br>被分配了还没有生效（落盘）则是记录在 <code>InoTable</code> 中:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">InoTable</span> : <span class="keyword">public</span> MDSTable &#123;</span><br><span class="line">...</span><br><span class="line"><span class="keyword">private</span>:</span><br><span class="line">  interval_set&lt;<span class="type">inodeno_t</span>&gt; free;   <span class="comment">// unused ids</span></span><br><span class="line">  interval_set&lt;<span class="type">inodeno_t</span>&gt; projected_free;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>其中 <code>free</code> 记录的就是没有被分配的 <code>inode</code> 集合，而 <code>projected_free</code> 则是从 <code>free</code> 中剔除了已经被分配但是还没有落盘的部分，因此 <code>projected_free</code> 是 <code>free</code> 的子集，同时显然分配也首先要在 <code>projected_free</code> 中来做。</p>
+<p>实际上 <code>interval_set</code> 就是一堆 <code>set</code> 的集合，这里代表可用的 <code>inode</code> 范围的集合，给一个可能的 <code>projected_free</code> 的内容，非常好理解：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">projected_recycle: ..., &#123;begin: 0x100068f03be, len: 49&#125;, &#123;beegin: 0x100068f045b, len: 2&#125;, ...</span><br></pre></td></tr></table></figure>
+
+<p>那么回到 <code>Server::prepare_new_inode</code>， MDS 对于客户端的请求需要返回一个 <code>CInode</code> 结构，首先就需要从 <code>InodeTable</code> 中取出一个可用的 <code>inode</code>，并以此构建 <code>CInode</code> 结构后返回，通常情况下这个过程很简单，我们只需要从 <code>projected_free</code> 中取出可用的第一个 <code>inode</code> 就可以了：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">id = projected_free.<span class="built_in">range_start</span>();</span><br><span class="line">projected_free.<span class="built_in">erase</span>(id);</span><br></pre></td></tr></table></figure>
+
+<p>这里首先将 <code>inode</code> 从 <code>projected_free</code> 中移除并将其返回给客户端，这个 <code>inode</code> 会在落盘后响应客户端时 <code>apply</code> 并 <code>free</code> 中移除：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::reply_client_request</span><span class="params">(MDRequestRef&amp; mdr, <span class="type">const</span> <span class="type">ref_t</span>&lt;MClientReply&gt; &amp;reply)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	<span class="built_in">apply_allocated_inos</span>(mdr, session);</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::apply_allocated_inos</span><span class="params">(MDRequestRef&amp; mdr, Session *session)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	mds-&gt;inotable-&gt;<span class="built_in">apply_alloc_id</span>(mdr-&gt;alloc_ino);</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">InoTable::apply_alloc_id</span><span class="params">(<span class="type">inodeno_t</span> id)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	free.<span class="built_in">erase</span>(id);</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>到这里为止 MDS 只有在落盘之后才向客户端返回分配好的 inode，直到一天我们认为在 MDS 刷盘写 <code>Journal</code> 的时候让客户端死等的效率太低了，由此就引入了 <code>early_reply</code> 以使得客户端能够快速接收到 MDS 的处理结果。</p>
+<hr>
+<p>首先当我们开启 <code>mds_early_reply</code> 时（实际上默认就是开启的），MDS 会在刷盘之前预先把处理的结果通过 <code>Server::early_reply</code> 返回一个 <code>unsafe reply</code> 给客户端，那么客户端在接收到 MDS 的返回结果后就可以继续进行下一个请求而不必等待 MDS 刷盘，而当 MDS 刷盘完成后则会再给客户端返回一个 <code>safe reply</code>，这时客户端只需要结束该 <code>request</code> 即可。</p>
+<p>这时如果在任意处理过程中 MDS 因为一些原因重启，则在客户端可能就会有一部分未接收到 <code>safe_reply</code> 确认的 <code>unsafe_requests</code> 需要 MDS 处理，那么这时客户端就会在 MDS 的 <code>reconnect</code> 阶段重发这些 <code>unsafe_requests</code> 消息以及之前已经发送但还没有收到任何回复的 <code>old_requests</code>， MDS 接收到这些请求之后则会将 <code>unsafe_requests</code> 消息加入 <code>replay_queue</code> 中等到 <code>client_replay</code> 阶段处理，而 <code>old_requests</code> 则会放到 <code>active</code> 阶段再处理。</p>
+<p>当 MDS 到达 <code>client_replay</code> 阶段后开始处理客户端 <code>unsafe_requests</code> 请求，这里由于客户端之前收到过 MDS 的 <code>unsafe_reply</code>，因此在发送 <code>unsafe_request</code> 中会携带 MDS 之前的处理结果（也就是之前预分配的 <code>inode</code> 号），而在 MDS 这边对于客户端的 <code>unsafe_request</code> 则的处理会按照重启前已经落盘或还没有落盘分别处理。</p>
+<p>如果说一条请求在 MDS 重启前已经落盘，那么在 <code>Server::handle_client_request</code> 中将进入 <code>completed_request</code> 逻辑，首先在 <code>session</code> 的 <code>completed_request</code> 中如果找到 <code>req-&gt;get_reqid().tid</code>，那么就对于这类请求就直接构建一个 <code>MClientReply</code> 并返回给客户端，而不必再执行一遍了：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::handle_client_request</span><span class="params">(<span class="type">const</span> <span class="type">cref_t</span>&lt;MClientRequest&gt; &amp;req)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	<span class="type">bool</span> has_completed = <span class="literal">false</span>;</span><br><span class="line">	<span class="keyword">if</span> (req-&gt;<span class="built_in">is_replay</span>() || req-&gt;<span class="built_in">get_retry_attempt</span>()) &#123;</span><br><span class="line">		<span class="type">inodeno_t</span> created;</span><br><span class="line">		<span class="keyword">if</span> (session-&gt;<span class="built_in">have_completed_request</span>(req-&gt;<span class="built_in">get_reqid</span>().tid, &amp;created)) &#123;</span><br><span class="line">			has_completed = <span class="literal">true</span>;</span><br><span class="line">		<span class="keyword">if</span> (req-&gt;<span class="built_in">is_replay</span>() || ...) &#123;</span><br><span class="line">			<span class="built_in">dout</span>(<span class="number">5</span>) &lt;&lt; <span class="string">&quot;already completed &quot;</span> &lt;&lt; req-&gt;<span class="built_in">get_reqid</span>() &lt;&lt; dendl;</span><br><span class="line">			<span class="keyword">auto</span> reply = <span class="built_in">make_message</span>&lt;MClientReply&gt;(*req, <span class="number">0</span>);</span><br><span class="line">			<span class="keyword">if</span> (created != <span class="built_in">inodeno_t</span>()) &#123;</span><br><span class="line">	  			bufferlist extra;</span><br><span class="line">	  			<span class="built_in">encode</span>(created, extra);</span><br><span class="line">	  			reply-&gt;<span class="built_in">set_extra_bl</span>(extra);</span><br><span class="line">			&#125;</span><br><span class="line">        	mds-&gt;<span class="built_in">send_message_client</span>(reply, session);</span><br><span class="line">	</span><br><span class="line">			<span class="keyword">if</span> (req-&gt;<span class="built_in">is_queued_for_replay</span>())</span><br><span class="line">	  			mds-&gt;<span class="built_in">queue_one_replay</span>();</span><br><span class="line">			<span class="keyword">return</span>;</span><br><span class="line">		&#125;</span><br><span class="line">	...</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>那对于没有落盘的 <code>unsafe_request</code> 请求，在 MDS 就没有办法直接完成，而是必须需要 MDS 重新执行一遍请求，那这里就涉及到一个问题，之前我们在 <code>prepare_new_inode</code> 中分配 <code>inode</code> 号只需要拿 <code>projected_free</code> 中的第一个没有被分配的 <code>inode</code> 号即可，那在 MDS 重新执行此请求时我们还是拿第一个 <code>inode</code> 号来分配吗？这样会造成和之前分配的 <code>inode</code> 号不相等的问题吗？</p>
+<p>而实际上为了避免这个问题，客户端在发送 <code>unsafe_request</code> 的时候就会携带之前 MDS 的处理结果，并要求 MDS 再次分配同样的 <code>inode</code>，当然这里能这样做还是基于集群中不存在恶意节点，因此我们相信客户端告知的 <code>inode</code> 确实是 MDS 之前分配出去的：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::handle_client_openc</span><span class="params">(MDRequestRef&amp; mdr)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	CInode *newi = <span class="built_in">prepare_new_inode</span>(mdr, dn-&gt;<span class="built_in">get_dir</span>(), <span class="built_in">inodeno_t</span>(req-&gt;head.ino),</span><br><span class="line">		req-&gt;head.args.open.mode | S_IFREG, &amp;layout);</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function">CInode* <span class="title">Server::prepare_new_inode</span><span class="params">(MDRequestRef&amp; mdr, CDir *dir, <span class="type">inodeno_t</span> useino, <span class="type">unsigned</span> mode, <span class="type">const</span> <span class="type">file_layout_t</span> *layout)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">    <span class="type">bool</span> allow_prealloc_inos = mdr-&gt;session-&gt;<span class="built_in">is_open</span>();</span><br><span class="line">	<span class="keyword">if</span> (allow_prealloc_inos &amp;&amp; (mdr-&gt;used_prealloc_ino = _inode-&gt;ino = mdr-&gt;session-&gt;<span class="built_in">take_ino</span>(useino))) &#123;</span><br><span class="line">		mds-&gt;sessionmap.<span class="built_in">mark_projected</span>(mdr-&gt;session);</span><br><span class="line">	&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">		mdr-&gt;alloc_ino = _inode-&gt;ino = mds-&gt;inotable-&gt;<span class="built_in">project_alloc_id</span>(useino);</span><br><span class="line">	&#125;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>注意这里 <code>inode</code> 可能是从 <code>session</code> 中取，也有可能从 <code>InodeTable</code> 取，取决于之前 MDS 是否通过 <code>project_alloc_ids</code> 分配给 <code>session</code> 一定数量的 <code>inode</code>，正常情况下对于一个 session 的第一个创建请求， MDS 会在分配 <code>inode</code> 的同时，从 <code>InodeTable</code> 取出一截 <code>inode</code> 号放到 session 中，接着之后的分配请求就都从 <code>session</code> 中分配了，如果 <code>session</code> 中的 <code>inode</code> 快分配完了那么再从 <code>InodeTable</code> 中拿一截再放到 <code>session</code> 中。</p>
+<h2 id="MDS-重启故障"><a href="#MDS-重启故障" class="headerlink" title="MDS 重启故障"></a>MDS 重启故障</h2><p>在上面的过程中无论 MDS 在重启前是否落盘都能 cover 住重启以后客户端发来的 <code>unsafe_requests</code> 消息，这样一来就能够保证 MDS 请求处理流程的幂等性。</p>
+<p>但是上面的一切都是建立在 <code>reconnect</code> 以及 <code>client_replay</code> 正常进行的情况下，如果 <code>reconnect</code> 失败， MDS 会如何处理客户端？客户端又会如何处理 <code>unsafe_requests</code>？</p>
+<p>首先我们这里所讨论的 <code>reconnect</code> 失败是由于 MDS 没有在 <code>reconnect</code> 阶段收到客户端发来的 <code>client_reconnect</code> 消息，之前提到客户端会在 MDS 的 <code>reconnect</code> 阶段向 MDS 发送 <code>unsafe_requests</code> 和 <code>old_requests</code>，那实际上客户端还会在所有消息的最后发送一条 <code>client_reconnect</code> 消息标志全部消息都发完了，MDS 在收到这条消息后将客户端从 MDS 的 <code>client_reconnect_gather</code> 中删除，MDS 会在 <code>reconnect</code> 阶段结束后遍历并通过 <code>kill_session</code> 关闭未完成 <code>client_reconnect</code> 的客户端 <code>session</code>。</p>
+<p>在 <code>Server::journal_close_session</code> 中 ：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Server::journal_close_session</span><span class="params">(Session *session, <span class="type">int</span> state, Context *on_safe)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	interval_set&lt;<span class="type">inodeno_t</span>&gt; inos_to_free;						<span class="comment">// (1)</span></span><br><span class="line">	inos_to_free.<span class="built_in">insert</span>(session-&gt;pending_prealloc_inos);</span><br><span class="line">	inos_to_free.<span class="built_in">insert</span>(session-&gt;free_prealloc_inos);</span><br><span class="line">	...</span><br><span class="line">	<span class="keyword">auto</span> fin = <span class="keyword">new</span> <span class="built_in">C_MDS_session_finish</span>(<span class="keyword">this</span>, session, sseq, <span class="literal">false</span>, pv, inos_to_free, piv,</span><br><span class="line">											session-&gt;delegated_inos, mdlog-&gt;<span class="built_in">get_current_segment</span>(), on_safe);		<span class="comment">// (2)</span></span><br><span class="line">	...</span><br><span class="line">	<span class="keyword">while</span>(!session-&gt;requests.<span class="built_in">empty</span>()) &#123;							<span class="comment">// (3)</span></span><br><span class="line">		<span class="keyword">auto</span> mdr = <span class="built_in">MDRequestRef</span>(*session-&gt;requests.<span class="built_in">begin</span>());</span><br><span class="line">		mdcache-&gt;<span class="built_in">request_kill</span>(mdr);</span><br><span class="line">	&#125;</span><br><span class="line">	</span><br></pre></td></tr></table></figure>
+
+<p>这里 MDS 在 <code>(1)</code> 处回收了之前分配给 <code>session</code> 的 <code>inode</code>, 并在 <code>(3)</code> 处移除了客户端 <code>session</code> 对应的请求，然后等到 <code>(2)</code> 完成后将 <code>session</code> 从 <code>session_map</code> 中移除。</p>
+<p>那么一旦客户端没有完成 <code>reconnect</code>， MDS 会在 <code>Server::kill_session</code> 中会一路调到 <code>AsyncConnection</code> 的 <code>shutdown_socket</code> 以关闭 socket 连接，这样一来客户端在 TCP 层面就会感知到对端的 socket 已经被关闭，继而在 <code>Client::_closed_mds_session</code> 中关闭这个 <code>session</code> 对应的请求并关闭 MDS 对应的 <code>session</code>, 这样一来下次 client 再要向 MDS 去发消息的时候就需要通过 <code>Client::_get_or_open_mds_session</code> 重新建立 <code>session</code>。</p>
+<p>在 <code>Client::kick_requests_closed</code> 中：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">Client::kick_requests_closed</span><span class="params">(MetaSession *session)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	<span class="keyword">for</span> (map&lt;<span class="type">ceph_tid_t</span>, MetaRequest*&gt;::iterator p = mds_requests.<span class="built_in">begin</span>(); p != mds_requests.<span class="built_in">end</span>(); ++p) &#123;</span><br><span class="line">		...</span><br><span class="line">		<span class="keyword">if</span> (req-&gt;mds == session-&gt;mds_num) &#123;</span><br><span class="line">			<span class="keyword">if</span> (req-&gt;caller_cond) &#123;					<span class="comment">// (1)</span></span><br><span class="line">				req-&gt;kick = <span class="literal">true</span>;</span><br><span class="line">				req-&gt;caller_cond-&gt;<span class="built_in">notify_all</span>();</span><br><span class="line">			&#125;</span><br><span class="line">      		req-&gt;item.<span class="built_in">remove_myself</span>();				<span class="comment">// (2)</span></span><br><span class="line"></span><br><span class="line">      		<span class="keyword">if</span> (req-&gt;got_unsafe) &#123;					<span class="comment">// (3)</span></span><br><span class="line">				req-&gt;unsafe_item.<span class="built_in">remove_myself</span>();</span><br><span class="line">				<span class="keyword">if</span> (<span class="built_in">is_dir_operation</span>(req)) &#123;</span><br><span class="line">					Inode *dir = req-&gt;<span class="built_in">inode</span>();</span><br><span class="line">					dir-&gt;<span class="built_in">set_async_err</span>(-CEPHFS_EIO);</span><br><span class="line">					req-&gt;unsafe_dir_item.<span class="built_in">remove_myself</span>();</span><br><span class="line">				&#125;</span><br><span class="line">				<span class="keyword">if</span> (req-&gt;target) &#123;</span><br><span class="line">					InodeRef &amp;in = req-&gt;target;</span><br><span class="line">					in-&gt;<span class="built_in">set_async_err</span>(-CEPHFS_EIO);</span><br><span class="line">					req-&gt;unsafe_target_item.<span class="built_in">remove_myself</span>();</span><br><span class="line">				&#125;</span><br><span class="line">				<span class="built_in">signal_cond_list</span>(req-&gt;waitfor_safe);</span><br><span class="line">				<span class="built_in">unregister_request</span>(req);</span><br><span class="line">			&#125;</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>可以看到客户端在 <code>kick_requests_closed</code> 中主要做了三个事情， <code>(1)</code> 处通过 <code>caller_cond-&gt;notify_all()</code> 唤醒所有 wait 在 <code>make_request</code> 处的请求并将其标记为 <code>kick</code>，这些请求都还没有接收到 MDS 的回复，因此会在下一个 while 循环中尝试和 MDS 建立新的连接并重传，接着 <code>(2)</code> 处将请求从 <code>session-&gt;requests</code> 中移除， <code>(3)</code> 中则是针对 <code>unsafe_request</code> 做了额外的处理，首先除了从 <code>session-&gt;requests</code> 中移除外 <code>unsafe_request</code> 还需要从 <code>session-&gt;unsafe_requests</code> 中移除，另外对于目录相关的操作客户端给目录的 <code>inode</code> 设置一个 <code>CEPHFS_EIO</code> (给所有 <code>inode</code> 对应的 <code>fh</code> 设置 <code>async_err</code>)，以及有 MDS 返回 <code>inode</code> 的也给对应的 <code>inode</code> 设置一个 <code>CEPHFS_EIO</code>， 最后将这些不需要重传（因为上层应用已经拿到了返回结果，实际上也无法重传， <code>make_request</code> 已经结束了）的请求通过 <code>unregister_request</code> 将其从 <code>mds_requests</code> 中移除。</p>
+<p>那么这里我们做一个简单的对上面部分的总结：</p>
+<ol>
+<li>如果客户端 <code>reconnect</code> 失败， MDS 会将客户端 <code>session</code> kill 掉并回收之前分配给客户端的 <code>inode</code></li>
+<li>客户端得知 <code>session</code> 被对端 MDS kill 掉，会将 <code>session</code> 对应的 <code>unsafe_requests</code> 移除，并唤醒所有正在等待回复的请求</li>
+<li>被唤醒的请求会在重建 <code>session</code> 后重试</li>
+</ol>
+<p>那么我们假设有两个请求 req1 (mkdir dir1 - 创建一个目录)，req2 (touch dir1&#x2F;file1 - 创建该目录下的一个文件)，其中在 MDS 重启前 req1 已经收到了来自 MDS 的 <code>unsafe_reply</code> （但是在 MDS 上对于 req1 的处理还没有落盘）因此客户端继续发送 req2，这时 MDS 重启，客户端 <code>reconnect</code> 超时失败，MDS 于是通过 <code>kill_session</code> 关闭客户端 <code>session</code>，而客户端如上文所说通过 <code>kick_requests_closed</code> 注销 req1 (req1 是 <code>unsafe_requset</code>) 并唤醒 req2 (req2 正在等待 MDS 回复)，那么客户端就会尝试和 MDS 重新建立 <code>session</code> 并重试 req2</p>
+<p>这里对于一个 <code>CREATE</code> 请求，客户端需要携带父目录 <code>inode</code> 和要创建的文件的 <code>dentry</code>，因此当请求到达 MDS 端时 MDS 在 <code>MDCache::path_traverse</code> 中就会尝试通过 <code>get_inode</code> 获取父目录，注意这里直接是从 Cache 中获取，因为 MDS 这里认为既然客户端能够发来这个请求那么一定是之前打开过这个目录，那么目录对应的 <code>CInode</code> 就应该在 LRU 中被 <code>pin</code> 住了，当然这里正常流程也有可能出现 Cache 不对等的情况，这涉及到的另一个已经被 fix 的 bug (对于两边 Cache 不对等的情况，MDS 应该尝试从 rados 重建 backtrace）我们这里不做展开，但是无论如何，对于 req1 创建的 <code>inode</code> 对于 MDS 来说确实是不可见的，因此 MDS 将会向客户端返回 <code>ESTALE</code> 错误，而当客户端接收到这个错误之后会继续尝试重传（<code>commit aabd5e9c by Xiubo Li</code> 移除了重传的逻辑）,由此 MDS 和 Client 陷入了无限循环。</p>
+<p>除此以外由于客户端在之前收到 <code>unsafe_reply</code> 时已经做了 <code>insert_trace</code>, 目录 dir1 的 <code>inode</code> 已经通过 <code>add_update_inode</code> 加入了 <code>inode_map</code> 中，后续如果有请求分配到了这个 <code>inode</code> （之前提到 MDS 会回收分配给 <code>session</code> 的 <code>inode</code>）的话就有可能造成 <code>inode</code> 结构混乱，例如后续分到这个 <code>inode</code> 的请求是一个 <code>CREATE</code> 请求的话在客户端就会产生混淆（甚至 crash），在客户端重启之前都无法解决。</p>
+<p>要解决以上这些问题，最根本的思路就是要解决客户端 <code>_closed_mds_session</code> 时处理一半的问题，要么所有的请求都 ban 掉，要么就让所有请求安全的重传，注意这里的所有也包括 <code>unsafe_requests</code>，因为之后的请求可能和 <code>unsafe_requests</code> 形成依赖关系。这里我选择的思路是后者，因为一来前者已经有人做了（如果不关闭 <code>mds_session_blocklist_on_evict</code> 选项那所有的请求在下一次循环时都会因为 <code>blocklist</code> 取消），再一个后者也更符合 <code>client_reconnect_stale</code> 的语义（毕竟我们开启这个选项就是为了客户端无感知恢复连接）</p>
+<p>以上就是对 MDS <code>InoTable</code> 分配流程的总结以及重启过程中 <code>reconnect</code> 失败导致的 <code>unsafe_requests</code> 被丢弃所引发的问题的分析，希望对大家有所帮助。</p>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"></div><div class="item" id="next"><div class="note">较早文章</div><a href="/posts/3797827770/">Ceph MDS MetaBlob 分析</a></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
