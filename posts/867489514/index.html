@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+
+<head>
+  <meta name="generator" content="Hexo 6.3.0">
+  <meta name="hexo-theme" content="https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5">
+  <meta charset="utf-8">
+  
+
+  <meta http-equiv='x-dns-prefetch-control' content='on' />
+  <link rel='dns-prefetch' href='https://gcore.jsdelivr.net'>
+  <link rel="preconnect" href="https://gcore.jsdelivr.net" crossorigin>
+  <link rel='dns-prefetch' href='//unpkg.com'>
+
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+  <meta name="HandheldFriendly" content="True" >
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f8">
+  
+  <title>Ceph-读写流程：客户端写流程分析(二) - Mer's Blog</title>
+
+  
+  <meta name="description" content="本文接上文对 Filer::write_trunc 及之后的流程做了梳理和总结.">
+
+  <!-- feed -->
+  
+
+  
+    
+<link rel="stylesheet" href="/css/main.css">
+
+  
+
+  
+
+  
+
+  
+
+
+  
+    
+      <link href="https://cdn.bootcdn.net/ajax/libs/lxgw-wenkai-screen-webfont/1.6.0/lxgwwenkaiscreen.css" rel="stylesheet">
+    
+      <link href="https://fonts.font.im/css?family=PT+Mono" rel="stylesheet">
+    
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC&display=swap" rel="stylesheet">
+    
+  
+</head>
+
+<body>
+  
+
+
+
+
+  <div class='l_body' id='start'>
+    <aside class='l_left' layout='post'>
+    
+
+  
+
+<header class="header"><div class="logo-wrap"><a class="title" href="/"><div class="main" ff="title">Mer's Blog</div><div class="sub normal cap">原来姹紫嫣红开遍，似这般都付与断井残垣</div><div class="sub hover cap" style="opacity:0">Talk is cheap, Show me the code</div></a></div>
+
+<nav class="menu dis-select"></nav>
+</header>
+
+
+<div class="widgets">
+<widget class="widget-wrapper search"><div class="widget-body"><div class="search-wrapper" id="search"><form class="search-form"><input type="text" class="search-input" id="search-input" data-filter="/blog/" placeholder="文章搜索"><svg t="1670596976048" class="icon search-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2676" width="200" height="200"><path d="M938.2 832.6L723.8 618.1c-2.5-2.5-5.3-4.4-7.9-6.4 36.2-55.6 57.3-121.8 57.3-193.1C773.3 222.8 614.6 64 418.7 64S64 222.8 64 418.6c0 195.9 158.8 354.6 354.6 354.6 71.3 0 137.5-21.2 193.2-57.4 2 2.7 3.9 5.4 6.3 7.8L832.5 938c14.6 14.6 33.7 21.9 52.8 21.9 19.1 0 38.2-7.3 52.8-21.8 29.2-29.1 29.2-76.4 0.1-105.5M418.7 661.3C284.9 661.3 176 552.4 176 418.6 176 284.9 284.9 176 418.7 176c133.8 0 242.6 108.9 242.6 242.7 0 133.7-108.9 242.6-242.6 242.6" p-id="2677"></path></svg></form><div id="search-result"></div><div class="search-no-result">没有找到内容！</div></div></div></widget>
+
+
+<widget class="widget-wrapper toc single" id="data-toc"><div class="widget-header cap dis-select"><span class="name">Ceph-读写流程：客户端写流程分析(二)</span></div><div class="widget-body fs14"><div class="doc-tree active"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%AD%A3%E6%96%87"><span class="toc-text">正文</span></a></li></ol></div></div></widget>
+
+
+
+
+</div>
+
+
+    </aside>
+    <div class='l_main'>
+      
+
+      
+
+
+<div class="bread-nav fs12"><div id="breadcrumb"><a class="cap breadcrumb" href="/">主页</a><span class="sep"></span><a class="cap breadcrumb" href="/">文章</a></div><div id="post-meta">发布于&nbsp;<time datetime="2023-05-29T03:36:46.000Z">2023-05-29</time></div></div>
+
+<article class='md-text content post'>
+<h1 class="article-title"><span>Ceph-读写流程：客户端写流程分析(二)</span></h1>
+<p>本文接上文对 <code>Filer::write_trunc</code> 及之后的流程做了梳理和总结.</p>
+<span id="more"></span>
+
+<h2 id="正文"><a href="#正文" class="headerlink" title="正文"></a>正文</h2><p>本文是 <a href="https://mer.popstack.site/posts/748254147/">Ceph 读写流程：客户端写流程分析</a> 的后续，前文包括 <code>ll_open</code> 和 <code>ll_write</code> 的处理流程。</p>
+<p>Client 通过 Filer::write_trunc 写文件时会做两件事： 通过 Striper::file_to_extents 做一次客户端条带化，将要写入的部分转换为对象的 extent 集合；接着通过 objecter-&gt;sg_write_trunc 进行写入</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">write_trunc</span> <span class="params">(...)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    vector&lt;ObjectExtent&gt; extents;</span><br><span class="line">    Striper::<span class="built_in">file_to_extents</span>(cct, ino, layout, offset, len, truncate_size,</span><br><span class="line">			     extents);</span><br><span class="line">    objecter-&gt;<span class="built_in">sg_write_trunc</span>(extents, snapc, bl, mtime, flags,</span><br><span class="line">		       truncate_size, truncate_seq, oncommit, op_flags);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>而在 sg_write_trunc 中，objecter 会向每个 ObjectExtent 对应的 OSD 发送 op 请求，这里通过 write_trunc 完成，考虑extents.size() &#x3D;&#x3D; 1 的情况如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (extents.<span class="built_in">size</span>() == <span class="number">1</span>) &#123;</span><br><span class="line">  <span class="built_in">write_trunc</span>(extents[<span class="number">0</span>].oid, extents[<span class="number">0</span>].oloc, extents[<span class="number">0</span>].offset,</span><br><span class="line">extents[<span class="number">0</span>].length, snapc, bl, mtime, flags,</span><br><span class="line">extents[<span class="number">0</span>].truncate_size, trunc_seq, oncommit,</span><br><span class="line"><span class="number">0</span>, <span class="number">0</span>, op_flags);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br></pre></td></tr></table></figure>
+
+<p>接着从 Objecter::write_trunc 到请求被发送到分几步进行，首先在 write_trunc 中 new 一个 Op 并调用 op_submit:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">ceph_tid_t</span> <span class="title">write_trunc</span><span class="params">(...)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	Op *o = <span class="keyword">new</span> <span class="built_in">Op</span>(oid, oloc, ops, flags | global_op_flags | CEPH_OSD_FLAG_WRITE, oncommit, objver);</span><br><span class="line">	<span class="built_in">op_submit</span>(o, &amp;tid);</span><br></pre></td></tr></table></figure>
+
+<p>Objecter::op_submit 中调用 Objecter::op_submit_with_budget 看需不需要 throttle，接着正式调用 Objecter::_op_submit，在 _op_submit 中获取或创建 OSDSession，然后通过 _send_op 发送：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">void</span> Objecter::_op_submit(Op *op, shunique_lock&lt;ceph::shared_mutex&gt;&amp; sul, <span class="type">ceph_tid_t</span> *ptid)</span><br><span class="line">&#123;</span><br><span class="line">	r = _get_session(op-&gt;target.osd, &amp;s, sul);</span><br><span class="line">	...</span><br><span class="line">		_send_op(op);</span><br></pre></td></tr></table></figure>
+
+<p>Objecter::_send_op 中通过 Op 构建 MOSDOp 并通过 session 对应的 connection 发送到 OSD:</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">void</span> Objecter::_send_op(Op *op)</span><br><span class="line">&#123;</span><br><span class="line">	MOSDOp *m = _prepare_osd_op(op);</span><br><span class="line">	...</span><br><span class="line">	op-&gt;session-&gt;con-&gt;<span class="built_in">send_message</span>(m);</span><br></pre></td></tr></table></figure>
+
+<p>MOSDOp 继承自 MOSDFastDispatchOp(Message 的子类)，header.type 类型是 CEPH_MSG_OSD_OP，消息到达 OSD 后通过 ms_fast_dispath 处理，正常情况下通过 dispatch_session_waiting 加入到处理队列中：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">OSD::ms_fast_dispatch</span><span class="params">(Message *m)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">		<span class="comment">// legacy client, and this is an MOSDOp (the *only* fast dispatch</span></span><br><span class="line">		<span class="comment">// message that didn&#x27;t have an explicit spg_t); we need to map</span></span><br><span class="line">		<span class="comment">// them to an spg_t while preserving delivery order.</span></span><br><span class="line">		<span class="keyword">auto</span> priv = m-&gt;<span class="built_in">get_connection</span>()-&gt;<span class="built_in">get_priv</span>();</span><br><span class="line">		<span class="keyword">if</span> (<span class="keyword">auto</span> session = <span class="built_in">static_cast</span>&lt;Session*&gt;(priv.<span class="built_in">get</span>()); session) &#123;</span><br><span class="line">			std::lock_guard l&#123;session-&gt;session_dispatch_lock&#125;;</span><br><span class="line">			op-&gt;<span class="built_in">get</span>();</span><br><span class="line">			session-&gt;waiting_on_map.<span class="built_in">push_back</span>(*op);</span><br><span class="line">			OSDMapRef nextmap = service.<span class="built_in">get_nextmap_reserved</span>();</span><br><span class="line">			<span class="built_in">dispatch_session_waiting</span>(session, nextmap);</span><br><span class="line">			service.<span class="built_in">release_map</span>(nextmap);</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">OSD::dispatch_session_waiting</span><span class="params">(<span class="type">const</span> ceph::<span class="type">ref_t</span>&lt;Session&gt;&amp; session, OSDMapRef osdmap)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	<span class="keyword">auto</span> i = session-&gt;waiting_on_map.<span class="built_in">begin</span>();</span><br><span class="line">	<span class="keyword">while</span> (i != session-&gt;waiting_on_map.<span class="built_in">end</span>()) &#123;</span><br><span class="line">		...</span><br><span class="line">		<span class="type">spg_t</span> pgid;</span><br><span class="line">		<span class="keyword">if</span> (m-&gt;<span class="built_in">get_type</span>() == CEPH_MSG_OSD_OP) &#123;</span><br><span class="line">			<span class="type">pg_t</span> actual_pgid = osdmap-&gt;<span class="built_in">raw_pg_to_pg</span>(<span class="built_in">static_cast</span>&lt;<span class="type">const</span> MOSDOp*&gt;(m)-&gt;<span class="built_in">get_pg</span>());</span><br><span class="line">			<span class="keyword">if</span> (!osdmap-&gt;<span class="built_in">get_primary_shard</span>(actual_pgid, &amp;pgid)) &#123;</span><br><span class="line">				<span class="keyword">continue</span>;</span><br><span class="line">			&#125;</span><br><span class="line">		&#125;</span><br><span class="line">		<span class="built_in">enqueue_op</span>(pgid, std::<span class="built_in">move</span>(op), m-&gt;<span class="built_in">get_map_epoch</span>());</span><br><span class="line">	&#125;</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">OSD::enqueue_op</span><span class="params">(<span class="type">spg_t</span> pg, OpRequestRef&amp;&amp; op, <span class="type">epoch_t</span> epoch)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">		op_shardedwq.<span class="built_in">queue</span>(</span><br><span class="line">			<span class="built_in">OpSchedulerItem</span>(</span><br><span class="line">				<span class="built_in">unique_ptr</span>&lt;OpSchedulerItem::OpQueueable&gt;(<span class="keyword">new</span> <span class="built_in">PGOpItem</span>(pg, std::<span class="built_in">move</span>(op))),</span><br><span class="line">				cost, priority, stamp, owner, epoch));</span><br></pre></td></tr></table></figure>
+
+<p>可以看到实际上就是向 op_shardedwq 中投递了一个 PGOpItem，而这个 op_shardedwq 实际上关联到的就是 osd_op_tp 这个 SharedThreadPool，因此 PGOpItem 投递进来之后就会被某一个 Worker 执行，执行的过程也是类似的，从 dequeue_op 开始</p>
+<p>在 OSD::dequeue_op 中，worker 拿到了 op 和其对应的 pg (已经拿到了 pglock)，于是调用 PrimaryLogPG::do_request 执行：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">OSD::dequeue_op</span><span class="params">(PGRef pg, OpRequestRef op, ThreadPool::TPHandle &amp;handle)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	pg-&gt;<span class="built_in">do_request</span>(op, handle);</span><br></pre></td></tr></table></figure>
+
+<p>进入到 PrimaryLogPG::do_request 则会按照 op 的类型做不同的处理，之前我们提到 MOSDOp 的 header.type 类型是 CEPH_MSG_OSD_OP，因此这里进入 do_op 中，其它类型对应不同的处理，比如 do_backfill、do_scan 等等：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="type">void</span> <span class="title">PrimaryLogPG::do_request</span><span class="params">(OpRequestRef&amp; op, ThreadPool::TPHandle &amp;handle)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	...</span><br><span class="line">	<span class="keyword">switch</span> (msg_type) &#123;</span><br><span class="line">		<span class="keyword">case</span> CEPH_MSG_OSD_OP:</span><br><span class="line">			...</span><br><span class="line">				 <span class="built_in">do_op</span>(op);</span><br></pre></td></tr></table></figure>
+
+<p>继续进入到 PrimaryLogPG::do_op 中，在这个函数中做的事情非常多非常复杂，这里看主要流程，排除处理流程后 do_op 函数中首先通过 PrimaryLogPG::find_object_context 查找对象上下文，由于此时还没有所以会在调用时通过 PrimaryLogPG::create_object_context 创建一个并返回，至于 object_context 的作用和意义这里先不做深究：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line">   <span class="number">2312</span> ▏ <span class="type">int</span> r = <span class="built_in">find_object_context</span>(</span><br><span class="line">   <span class="number">2313</span> ▏ ▏ oid, &amp;obc, can_create,</span><br><span class="line">   <span class="number">2314</span> ▏ ▏ m-&gt;<span class="built_in">has_flag</span>(CEPH_OSD_FLAG_MAP_SNAP_CLONE),</span><br><span class="line">   <span class="number">2315</span> ▏ ▏ &amp;missing_oid);</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">int</span> <span class="title">PrimaryLogPG::find_object_context</span><span class="params">(..., ObjectContextRef *pobc, ...)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	<span class="keyword">if</span> (oid.snap == CEPH_NOSNAP) &#123;</span><br><span class="line">		ObjectContextRef obc = <span class="built_in">get_object_context</span>(oid, can_create);</span><br><span class="line">		*pobc = obc;</span><br><span class="line">		<span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">	&#125;</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line"><span class="function">ObjectContextRef <span class="title">PrimaryLogPG::get_object_context</span><span class="params">(...)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">	ObjectContextRef obc = object_contexts.<span class="built_in">lookup</span>(soid);</span><br><span class="line">	<span class="keyword">if</span> (obc) &#123;</span><br><span class="line">		...</span><br><span class="line">	&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">		<span class="keyword">if</span> (attrs) &#123;</span><br><span class="line">			...</span><br><span class="line">		&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">			<span class="type">int</span> r = pgbackend-&gt;<span class="built_in">objects_get_attr</span>(soid, OI_ATTR, &amp;bv);</span><br><span class="line">			<span class="keyword">if</span> (r &lt; <span class="number">0</span>) &#123;</span><br><span class="line">				<span class="function"><span class="type">object_info_t</span> <span class="title">oi</span><span class="params">(soid)</span></span>;</span><br><span class="line">				SnapSetContext *ssc = <span class="built_in">get_snapset_context</span>(soid, <span class="literal">true</span>, <span class="number">0</span>, <span class="literal">false</span>);</span><br><span class="line">				obc = <span class="built_in">create_object_context</span>(oi, ssc);</span><br><span class="line">				<span class="keyword">return</span> obc;</span><br><span class="line">			&#125;</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>接着往下走创建一个 OpContext，并正式通过 execute_ctx 开始执行：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">OpContext *ctx = <span class="keyword">new</span> <span class="built_in">OpContext</span>(op, m-&gt;<span class="built_in">get_reqid</span>(), &amp;m-&gt;ops, obc, <span class="keyword">this</span>);</span><br><span class="line"><span class="built_in">execute_ctx</span>(ctx);</span><br></pre></td></tr></table></figure>
+
+
+<div class="article-footer reveal fs14"><section id="license"><div class="header"><span>许可协议</span></div><div class="body"><p>本文采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">署名-非商业性使用-相同方式共享 4.0 国际</a> 许可协议，转载请注明出处。</p>
+</div></section></div>
+
+</article>
+
+<div class="related-wrap reveal" id="read-next"><section class="body"><div class="item" id="prev"></div><div class="item" id="next"><div class="note">较早文章</div><a href="/posts/3177229983/">Ceph-Fuse Perms heap-buffer-overflow 问题</a></div></section></div>
+
+
+
+
+
+
+  <div class='related-wrap md-text reveal' id="comments">
+    <section class='header cmt-title cap theme'>
+      快来参与讨论吧
+    </section>
+    <section class='body cmt-body giscus'>
+      
+
+<svg class="loading" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2709"><path d="M832 512c0-176-144-320-320-320V128c211.2 0 384 172.8 384 384h-64zM192 512c0 176 144 320 320 320v64C300.8 896 128 723.2 128 512h64z" p-id="2710"></path></svg>
+
+<div id="giscus" data-repo="Mer1997/Mer1997.github.io.comment" data-repo-id="R_kgDOJOGXvw" data-category="Announcements" data-category-id="DIC_kwDOJOGXv84CVIyU" data-mapping="pathname" data-strict="0" data-reactions-enabled="1" data-emit-metadata="0" data-input-position="top" data-theme="preferred_color_scheme" data-lang="zh-CN" data-loading="lazy" crossorigin="anonymous"></div>
+
+    </section>
+  </div>
+
+
+
+      
+<footer class="page-footer reveal fs12"><hr><div class="text"><p>本站由 <a href="/">@anonymity</a> 使用 <a target="_blank" rel="noopener" href="https://github.com/xaoxuu/hexo-theme-stellar">Stellar</a> 主题创建。<br>本博客所有文章除特别声明外，均采用 <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> 许可协议，转载请注明出处。</p>
+</div></footer>
+
+      <div class='float-panel mobile-only blur' style='display:none'>
+  <button type='button' class='sidebar-toggle mobile' onclick='sidebar.toggle()'>
+    <svg class="icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15301"><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 2.3 26.8 24.6 47.5 51.6 47.6h416.5v4z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15302"></path><path d="M566.407 808.3c26.9-0.1 49.3-20.8 51.6-47.6-1.9-27.7-23.9-49.7-51.6-51.6h-412.6c-28.2-1.4-52.6 19.5-55.5 47.6 1.9 27.7 23.9 49.7 51.6 51.6h416.5z m309.3-249.9c26.9-0.1 49.3-20.8 51.6-47.6-2.2-26.8-24.6-47.5-51.6-47.6h-721.9c-27.7-2.8-52.5 17.4-55.3 45.1-0.1 0.8-0.1 1.7-0.2 2.5 0.9 27.2 23.6 48.5 50.7 47.6H875.707z m-103.1-245.9c26.9-0.1 49.3-20.8 51.6-47.6-0.4-28.3-23.2-51.1-51.5-51.6h-618.9c-29.5-1.1-54.3 21.9-55.5 51.4v0.2c1.4 27.8 25.2 49.2 53 47.8 0.8 0 1.7-0.1 2.5-0.2h618.8z" p-id="15303"></path></svg>
+  </button>
+</div>
+
+    </div>
+  </div>
+  <div class='scripts'>
+    <script type="text/javascript">
+  const stellar = {
+    // 懒加载 css https://github.com/filamentgroup/loadCSS
+    loadCSS: (href, before, media, attributes) => {
+      var doc = window.document;
+      var ss = doc.createElement("link");
+      var ref;
+      if (before) {
+        ref = before;
+      } else {
+        var refs = (doc.body || doc.getElementsByTagName("head")[0]).childNodes;
+        ref = refs[refs.length - 1];
+      }
+      var sheets = doc.styleSheets;
+      if (attributes) {
+        for (var attributeName in attributes) {
+          if (attributes.hasOwnProperty(attributeName)) {
+            ss.setAttribute(attributeName, attributes[attributeName]);
+          }
+        }
+      }
+      ss.rel = "stylesheet";
+      ss.href = href;
+      ss.media = "only x";
+      function ready(cb) {
+        if (doc.body) {
+          return cb();
+        }
+        setTimeout(function () {
+          ready(cb);
+        });
+      }
+      ready(function () {
+        ref.parentNode.insertBefore(ss, before ? ref : ref.nextSibling);
+      });
+      var onloadcssdefined = function (cb) {
+        var resolvedHref = ss.href;
+        var i = sheets.length;
+        while (i--) {
+          if (sheets[i].href === resolvedHref) {
+            return cb();
+          }
+        }
+        setTimeout(function () {
+          onloadcssdefined(cb);
+        });
+      };
+      function loadCB() {
+        if (ss.addEventListener) {
+          ss.removeEventListener("load", loadCB);
+        }
+        ss.media = media || "all";
+      }
+      if (ss.addEventListener) {
+        ss.addEventListener("load", loadCB);
+      }
+      ss.onloadcssdefined = onloadcssdefined;
+      onloadcssdefined(loadCB);
+      return ss;
+    },
+
+    // 从 butterfly 和 volantis 获得灵感
+    loadScript: (src, opt) => new Promise((resolve, reject) => {
+      var script = document.createElement('script');
+      script.src = src;
+      if (opt) {
+        for (let key of Object.keys(opt)) {
+          script[key] = opt[key]
+        }
+      } else {
+        // 默认异步，如果需要同步，第二个参数传入 {} 即可
+        script.async = true
+      }
+      script.onerror = reject
+      script.onload = script.onreadystatechange = function() {
+        const loadState = this.readyState
+        if (loadState && loadState !== 'loaded' && loadState !== 'complete') return
+        script.onload = script.onreadystatechange = null
+        resolve()
+      }
+      document.head.appendChild(script)
+    }),
+
+    // https://github.com/jerryc127/hexo-theme-butterfly
+    jQuery: (fn) => {
+      if (typeof jQuery === 'undefined') {
+        stellar.loadScript(stellar.plugins.jQuery).then(fn)
+      } else {
+        fn()
+      }
+    }
+  };
+  stellar.version = '1.18.5';
+  stellar.github = 'https://github.com/xaoxuu/hexo-theme-stellar/tree/1.18.5';
+  stellar.config = {
+    date_suffix: {
+      just: '刚刚',
+      min: '分钟前',
+      hour: '小时前',
+      day: '天前',
+      month: '个月前',
+    },
+  };
+
+  // required plugins (only load if needs)
+  stellar.plugins = {
+    jQuery: 'https://gcore.jsdelivr.net/npm/jquery@3.6.2/dist/jquery.min.js'
+  };
+
+  if ('local_search') {
+    stellar.search = {};
+    stellar.search.service = 'local_search';
+    if (stellar.search.service == 'local_search') {
+      let service_obj = Object.assign({}, {"field":"all","path":"/search.json","content":true,"sort":"-date"});
+      stellar.search[stellar.search.service] = service_obj;
+    }
+  }
+
+  // stellar js
+  stellar.plugins.stellar = Object.assign({"sites":"/js/plugins/sites.js","friends":"/js/plugins/friends.js","ghinfo":"/js/plugins/ghinfo.js","timeline":"/js/plugins/timeline.js","linkcard":"/js/plugins/linkcard.js","fcircle":"/js/plugins/fcircle.js","weibo":"/js/plugins/weibo.js"});
+
+  stellar.plugins.marked = Object.assign("https://cdn.bootcdn.net/ajax/libs/marked/4.0.18/marked.min.js");
+  // optional plugins
+  if ('true' == 'true') {
+    stellar.plugins.lazyload = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/vanilla-lazyload@17.8.3/dist/lazyload.min.js","transition":"blur"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.swiper = Object.assign({"enable":true,"css":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.css","js":"https://unpkg.com/swiper@8.4.5/swiper-bundle.min.js"});
+  }
+  if ('' == 'true') {
+    stellar.plugins.scrollreveal = Object.assign({"enable":null,"js":"https://gcore.jsdelivr.net/npm/scrollreveal@4.0.9/dist/scrollreveal.min.js","distance":"8px","duration":500,"interval":100,"scale":1});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.preload = Object.assign({"enable":true,"service":"flying_pages","instant_page":"https://gcore.jsdelivr.net/gh/volantis-x/cdn-volantis@4.1.2/js/instant_page.js","flying_pages":"https://gcore.jsdelivr.net/gh/gijo-varghese/flying-pages@2.1.2/flying-pages.min.js"});
+  }
+  if ('true' == 'true') {
+    stellar.plugins.fancybox = Object.assign({"enable":true,"js":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.umd.js","css":"https://gcore.jsdelivr.net/npm/@fancyapps/ui@4.0/dist/fancybox.css","selector":".swiper-slide img"});
+  }
+  if ('false' == 'true') {
+    stellar.plugins.heti = Object.assign({"enable":false,"css":"https://unpkg.com/heti@0.9.2/umd/heti.min.css","js":"https://unpkg.com/heti@0.9.2/umd/heti-addon.min.js"});
+  }
+</script>
+
+<!-- required -->
+
+  
+<script src="/js/main.js" async></script>
+
+
+
+<!-- optional -->
+
+  <script>
+  function loadJS() {
+    const els = document.querySelectorAll("#comments #giscus");
+    if (els.length === 0) return;
+    els.forEach((el, i) => {
+      try {
+        el.innerHTML = '';
+      } catch (error) {
+        console.log(error);
+      }
+      var script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      for (let key of Object.keys(el.attributes)) {
+        let attr = el.attributes[key];
+        if (['class', 'id'].includes(attr.name) === false) {
+          script.setAttribute(attr.name, attr.value);
+        }
+      }
+      el.appendChild(script);
+    });
+  }
+  window.addEventListener('DOMContentLoaded', (event) => {
+    loadJS();
+  });
+</script>
+
+
+
+
+<!-- inject -->
+
+
+  </div>
+</body>
+</html>
