@@ -1,0 +1,6 @@
+/public/
+/resources/_gen/
+/.playwright-cli/
+/output/
+/.hugo_build.lock
+.DS_Store

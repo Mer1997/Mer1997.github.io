@@ -1,0 +1,11 @@
+{{ define "main" }}
+  <header class="list-header">
+    <p class="eyebrow">Taxonomy</p>
+    <h1>{{ .Title }}</h1>
+  </header>
+  <div class="term-cloud">
+    {{ range .Data.Terms.ByCount }}
+      <a href="{{ .Page.RelPermalink }}"><span>#{{ .Page.LinkTitle }}</span><strong>{{ .Count }}</strong></a>
+    {{ end }}
+  </div>
+{{ end }}
