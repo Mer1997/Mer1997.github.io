@@ -1,3 +1,103 @@
+// Enhance unlinked article images; linked images retain their original action.
+(() => {
+  if (typeof HTMLDialogElement === 'undefined') return;
+  const images = [...document.querySelectorAll('.post-content img')]
+    .filter(img => !img.closest('a, button, [data-no-zoom]'));
+  if (!images.length) return;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'image-viewer';
+  dialog.setAttribute('aria-label', '文章图片查看器');
+  dialog.innerHTML = `<div class="image-viewer-bar">
+    <span class="image-viewer-count" aria-live="polite"></span>
+    <button type="button" data-previous aria-label="上一张图片">←</button>
+    <button type="button" data-next aria-label="下一张图片">→</button>
+    <button type="button" data-zoom aria-pressed="false">原始尺寸</button>
+    <a data-original target="_blank" rel="noopener noreferrer">打开原图</a>
+    <button type="button" data-close autofocus>关闭</button>
+  </div>
+  <div class="image-viewer-stage"><img alt=""></div>
+  <p class="image-viewer-caption" aria-live="polite"></p>`;
+  document.body.append(dialog);
+  const stage = dialog.querySelector('.image-viewer-stage');
+  const fullImage = stage.querySelector('img');
+  const caption = dialog.querySelector('.image-viewer-caption');
+  const zoomButton = dialog.querySelector('[data-zoom]');
+  const previous = dialog.querySelector('[data-previous]');
+  const next = dialog.querySelector('[data-next]');
+  previous.hidden = next.hidden = images.length < 2;
+  let index = 0;
+  let opener;
+  let description = '';
+  const setZoom = zoomed => {
+    stage.classList.toggle('is-zoomed', zoomed);
+    zoomButton.setAttribute('aria-pressed', String(zoomed));
+    zoomButton.textContent = zoomed ? '适应屏幕' : '原始尺寸';
+    stage.scrollTop = stage.scrollLeft = 0;
+  };
+  const show = target => {
+    index = (target + images.length) % images.length;
+    const source = images[index];
+    description = source.alt.trim() || `文章图片 ${index + 1}`;
+    caption.textContent = description;
+    fullImage.alt = description;
+    fullImage.src = source.src;
+    dialog.querySelector('[data-original]').href = source.src;
+    dialog.querySelector('.image-viewer-count').textContent = `${index + 1} / ${images.length}`;
+    setZoom(false);
+  };
+  fullImage.addEventListener('error', () => {
+    caption.textContent = `${description} · 图片加载失败，可尝试打开原图`;
+  });
+  fullImage.addEventListener('load', () => { caption.textContent = description; });
+  images.forEach((img, position) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'image-trigger';
+    button.setAttribute('aria-label', `放大图片：${img.alt.trim() || `文章图片 ${position + 1}`}`);
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.title = '点击放大图片';
+    // Keep responsive <picture> sources together with their image.
+    const target = img.closest('picture') || img;
+    target.before(button);
+    button.append(target);
+    button.addEventListener('click', () => {
+      opener = button;
+      show(position);
+      dialog.showModal();
+      document.documentElement.classList.add('image-viewer-open');
+    });
+  });
+  previous.addEventListener('click', () => show(index - 1));
+  next.addEventListener('click', () => show(index + 1));
+  const toggleZoom = () => setZoom(!stage.classList.contains('is-zoomed'));
+  zoomButton.addEventListener('click', toggleZoom);
+  fullImage.addEventListener('click', toggleZoom);
+  dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+  stage.addEventListener('click', event => { if (event.target === stage) dialog.close(); });
+  dialog.addEventListener('keydown', event => {
+    if (event.key === 'Tab') {
+      const controls = [...dialog.querySelectorAll('button:not([hidden]), a[href]')];
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus();
+      }
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      show(index + (event.key === 'ArrowLeft' ? -1 : 1));
+    }
+  });
+  // Native modal makes the page inert and supports Escape; restore focus on exit.
+  dialog.addEventListener('close', () => {
+    document.documentElement.classList.remove('image-viewer-open');
+    fullImage.removeAttribute('src');
+    opener?.focus({ preventScroll: true });
+  });
+})();
+
 // Article tools also run on pages without the homepage search field.
 (() => {
   const content = document.querySelector('.post-content');

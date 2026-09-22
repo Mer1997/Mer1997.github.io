@@ -1,0 +1,35 @@
+{{- /* Also handles recovered articles containing raw HTML, not only Markdown. */ -}}
+{{- $page := . -}}
+{{- $content := .Content -}}
+{{- range findRE `<img\b[^>]*>` $content -}}
+  {{- $original := . -}}
+  {{- $tag := . -}}
+  {{- $extra := "" -}}
+  {{- if not (findRE `\sloading\s*=` $tag) -}}
+    {{- $extra = printf `%s loading="lazy"` $extra -}}
+  {{- end -}}
+  {{- if not (findRE `\sdecoding\s*=` $tag) -}}
+    {{- $extra = printf `%s decoding="async"` $extra -}}
+  {{- end -}}
+  {{- if not (findRE `\s(width|height)\s*=` $tag) -}}
+    {{- with findRESubmatch `\ssrc\s*=\s*["']([^"']+)["']` $tag -}}
+      {{- $url := urls.Parse (htmlUnescape (index (index . 0) 1)) -}}
+      {{- if and (not $url.Host) (not $url.Scheme) -}}
+        {{- $path := $url.Path -}}
+        {{- if and (strings.HasPrefix $path "/images/") (not (in $path "..")) (fileExists (printf "static%s" $path)) (findRE `(?i)\.(png|jpe?g|gif|webp)$` $path) -}}
+          {{- $size := images.Config (printf "static%s" $path) -}}
+          {{- $extra = printf `%s width="%d" height="%d"` $extra $size.Width $size.Height -}}
+        {{- else -}}
+          {{- with $page.Resources.Get $path -}}
+            {{- if and (eq .ResourceType "image") (ne .MediaType.Type "image/svg+xml") -}}
+              {{- $extra = printf `%s width="%d" height="%d"` $extra .Width .Height -}}
+            {{- end -}}
+          {{- end -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $tag = replaceRE `\s*/?>$` (printf "%s>" $extra) $tag -}}
+  {{- $content = replace $content $original $tag -}}
+{{- end -}}
+{{- $content | safeHTML -}}

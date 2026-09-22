@@ -1,0 +1,18 @@
+{{ $posts := where site.RegularPages "Section" "posts" }}
+{{ with $posts.Related . | first 3 }}
+<section class="related-posts" aria-labelledby="related-heading">
+  <h2 id="related-heading">继续阅读</h2>
+  <p class="related-intro">你可能也感兴趣的相关文章</p>
+  <ul class="related-list">
+    {{ range . }}
+    <li>
+      <a href="{{ .RelPermalink }}">
+        <h3>{{ .Title }}</h3>
+        {{ with .Description }}<p>{{ . | plainify | truncate 90 }}</p>{{ end }}
+        <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006-01-02" }}</time>
+      </a>
+    </li>
+    {{ end }}
+  </ul>
+</section>
+{{ end }}
