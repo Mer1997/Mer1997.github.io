@@ -1,0 +1,59 @@
+baseURL: https://merisky.top/
+locale: zh-cn
+defaultContentLanguage: zh-cn
+title: Mer's Blog
+timeZone: Asia/Shanghai
+enableRobotsTXT: true
+capitalizeListTitles: false
+summaryLength: 36
+
+pagination:
+  pagerSize: 10
+
+taxonomies:
+  tag: tags
+
+permalinks:
+  posts: /posts/:slug/
+
+outputs:
+  home:
+    - html
+    - rss
+    - json
+
+outputFormats:
+  json:
+    baseName: search
+    isPlainText: true
+    mediaType: application/json
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+
+params:
+  description: Mer's Stack Pop Site
+  subtitle: 原来姹紫嫣红开遍，似这般都付与断井残垣
+  hoverSubtitle: Talk is cheap, Show me the code
+  author: Mer
+  licenseName: CC BY-NC-SA 4.0
+  licenseURL: https://creativecommons.org/licenses/by-nc-sa/4.0/
+  giscus:
+    repo: Mer1997/Mer1997.github.io.comment
+    repoID: R_kgDOJOGXvw
+    category: Announcements
+    categoryID: DIC_kwDOJOGXv84CVIyU
+
+menus:
+  main:
+    - name: 近期发布
+      pageRef: /
+      weight: 10
+    - name: 标签
+      pageRef: /tags
+      weight: 20
+    - name: 归档
+      pageRef: /archives
+      weight: 30
