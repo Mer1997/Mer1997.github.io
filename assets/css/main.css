@@ -51,6 +51,7 @@ img { max-width: 100%; height: auto; border-radius: 0.55rem; }
 .site-main { min-height: 70vh; padding: 3.5rem 0 5rem; }
 .site-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 1rem;
   padding: 1.5rem 0 2.5rem;
@@ -59,6 +60,8 @@ img { max-width: 100%; height: auto; border-radius: 0.55rem; }
   font-size: 0.78rem;
 }
 .site-footer p { margin: 0; }
+.site-footer .visitor-stats { flex-basis: 100%; font-variant-numeric: tabular-nums; }
+.stats-source { white-space: nowrap; }
 
 .intro, .list-header, .not-found { margin-bottom: 2.5rem; }
 .intro h1, .list-header h1, .not-found h1 {
@@ -228,6 +231,11 @@ html.image-viewer-open { overflow: hidden; }
 .image-viewer-caption { margin: 0; padding: 0.6rem 1rem max(0.8rem, env(safe-area-inset-bottom)); text-align: center; font: 0.85rem/1.5 var(--sans); overflow-wrap: anywhere; max-height: 20vh; overflow-y: auto; }
 @media (max-width: 680px) { .related-list { grid-template-columns: 1fr; } }
 .reading-body { position: relative; }
+.reading-resume { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1.5rem; padding: 0.8rem 1rem; border: 1px solid var(--line); border-radius: 0.6rem; background: var(--surface); font-size: 0.85rem; }
+.reading-resume small { width: 100%; color: var(--muted); }
+.reading-resume button { min-height: 44px; padding: 0.35rem 0.65rem; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--bg); color: var(--accent); font: inherit; cursor: pointer; }
+.back-to-start { position: fixed; z-index: 20; right: max(1rem, env(safe-area-inset-right)); bottom: max(1rem, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 0.4rem; min-height: 44px; padding: 0.5rem 0.8rem; border: 1px solid var(--line); border-radius: 0.6rem; color: var(--accent); background: var(--surface-strong); box-shadow: var(--shadow); font-size: 0.82rem; }
+.back-to-start:focus-visible, .reading-resume button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .article-toc { margin-bottom: 1.5rem; font-family: var(--sans); font-size: 0.9rem; }
 .article-toc details { border: 1px solid var(--line); border-radius: 0.55rem; background: var(--bg); padding: 0.6rem 0.8rem; }
 .article-toc summary { cursor: pointer; font-weight: 600; }

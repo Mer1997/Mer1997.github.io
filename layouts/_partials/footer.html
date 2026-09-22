@@ -1,4 +1,12 @@
 <footer class="site-footer">
   <p>© {{ now.Year }} {{ site.Params.author }} · <a href="{{ site.Params.licenseURL }}">{{ site.Params.licenseName }}</a></p>
   <p>Power by <a href="https://gohugo.io/">Hugo</a></p>
+  {{ if hugo.IsProduction }}
+  <p class="visitor-stats" data-visitor-stats data-site-host="{{ (urls.Parse site.BaseURL).Host }}">
+    <span data-stats-status>访问统计加载中…</span>
+    <span data-stats-values hidden>全站访问 <span data-site-pv></span> 次 · 近似访客 <span data-site-uv></span></span>
+    <span class="stats-source"> · <a href="https://busuanzi.ibruce.info/" rel="noopener noreferrer" target="_blank">不蒜子</a> · <a href="/about/#privacy">隐私说明</a></span>
+    <noscript>（需启用 JavaScript）</noscript>
+  </p>
+  {{ end }}
 </footer>

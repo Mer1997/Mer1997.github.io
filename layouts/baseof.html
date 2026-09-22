@@ -13,5 +13,13 @@
     </div>
     {{ $js := resources.Get "js/main.js" | minify | fingerprint }}
     <script defer src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}"></script>
+    {{ if and .IsPage (eq .Section "posts") }}
+      {{ $reading := resources.Get "js/reading.js" | minify | fingerprint }}
+      <script defer src="{{ $reading.RelPermalink }}" integrity="{{ $reading.Data.Integrity }}"></script>
+    {{ end }}
+    {{ if hugo.IsProduction }}
+      {{ $stats := resources.Get "js/stats.js" | minify | fingerprint }}
+      <script defer src="{{ $stats.RelPermalink }}" integrity="{{ $stats.Data.Integrity }}"></script>
+    {{ end }}
   </body>
 </html>
