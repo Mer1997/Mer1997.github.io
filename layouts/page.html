@@ -1,18 +1,29 @@
 {{ define "main" }}
 <article class="post-page">
   <header class="post-header">
-    <p class="breadcrumb"><a href="{{ site.Home.RelPermalink }}">主页</a> / 文章</p>
+    <p class="breadcrumb"><a href="{{ site.Home.RelPermalink }}">主页</a> / {{ if eq .Section "posts" }}文章{{ else }}{{ .Title }}{{ end }}</p>
     <h1>{{ .Title }}</h1>
-    <div class="post-meta">
+    {{ if eq .Section "posts" }}<div class="post-meta">
       <time datetime="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}">发布于 {{ .Date.Format "2006-01-02" }}</time>
+      {{ if gt .Lastmod.Unix .Date.Unix }}
+        <span aria-hidden="true">·</span>
+        <time datetime="{{ .Lastmod.Format "2006-01-02T15:04:05Z07:00" }}"{{ if .Params.legacy }} title="旧文恢复：依据旧站文件最后一次 Git 提交时间，未必等于正文修改时间"{{ end }}>{{ if .Params.legacy }}存档更新{{ else }}更新于{{ end }} {{ .Lastmod.Format "2006-01-02" }}</time>
+      {{ end }}
       {{ with .GetTerms "tags" }}
         <span aria-hidden="true">·</span>
         {{ range . }}<a href="{{ .RelPermalink }}">#{{ .LinkTitle }}</a>{{ end }}
       {{ end }}
-    </div>
+    </div>{{ end }}
   </header>
+  <div class="reading-body">
+  {{ if eq .Section "posts" }}
+  <aside class="article-toc" data-toc hidden>
+    <details><summary>文章目录</summary><nav aria-label="文章目录"></nav></details>
+  </aside>
+  {{ end }}
   <div class="post-content{{ if .Params.legacy }} legacy-content{{ end }}">
     {{ .Content }}
+  </div>
   </div>
   <aside class="license-box">
     本文采用 <a href="{{ site.Params.licenseURL }}">{{ site.Params.licenseName }}</a> 许可协议，转载请注明出处。
