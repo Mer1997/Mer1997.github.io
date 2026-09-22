@@ -160,6 +160,13 @@ img { max-width: 100%; height: auto; border-radius: 0.55rem; }
 .post-content .headerlink::before { content: "#"; color: var(--line); }
 
 .highlight {
+  /* Wide legacy tables must not trigger Safari's automatic text inflation.
+     This does not restrict browser pinch zoom or page zoom. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 0.82rem;
   margin: 1.3rem 0;
   overflow-x: auto;
   border: 1px solid #35323d;
@@ -171,6 +178,8 @@ img { max-width: 100%; height: auto; border-radius: 0.55rem; }
 .highlight .gutter { display: none; }
 .highlight .code { padding: 1rem 1.15rem; }
 .highlight .code pre { min-width: max-content; color: var(--code-text); background: transparent; font-size: 0.82rem; line-height: 1.65; }
+.highlight pre, .highlight code { font-size: 0.82rem; line-height: 1.65; }
+.highlight > pre { padding: 1rem 1.15rem; overflow-x: auto; }
 .highlight .code code, .highlight code { padding: 0; color: inherit; background: transparent; }
 .highlight .comment { color: #8b8798; }
 .highlight .keyword, .highlight .literal { color: #d9a3ff; }
