@@ -7,6 +7,11 @@ import sys
 from pathlib import Path
 from fontTools.ttLib import TTFont
 from fontTools import subset
+from importlib.util import spec_from_file_location, module_from_spec
+
+spec = spec_from_file_location('compact_font', Path(__file__).with_name('compact-font-css.py'))
+compact_font = module_from_spec(spec)
+spec.loader.exec_module(compact_font)
 
 root = Path(__file__).resolve().parents[1]
 source = Path(sys.argv[1])
@@ -35,7 +40,7 @@ for i, chars in enumerate(groups):
     name = f'gb-screen-1.522-{i:02}.woff2'
     subset.save_font(font, str(out / name), options)
     font.close()
-    ranges = ','.join(f'U+{n:X}' for n in chars)
+    ranges = compact_font.compact(','.join(f'U+{n:X}' for n in chars))
     css.append('@font-face {font-family:"LXGW WenKai GB Screen Web";font-style:normal;'
                'font-weight:400;font-display:swap;src:url("/fonts/lxgw-wenkai/'
                + name + '") format("woff2");unicode-range:' + ranges + ';}')
