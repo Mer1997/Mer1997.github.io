@@ -53,3 +53,16 @@ or open the original in a separate tab. Escape, Close, or the empty backdrop
 closes the viewer and restores focus. Images already inside links retain their
 original link action. Add `data-no-zoom` to an image or its container to opt out.
 Without JavaScript, all original article images remain visible.
+
+## Reading position and visitor totals
+
+Article pages offer an opt-in resume prompt and a back-to-article-start button.
+Positions use a single versioned localStorage key (`mer-blog:reading:v1`), capped
+at 50 entries / 90 days. Incoming anchors take precedence; storage errors are
+non-fatal. No reading history is sent to a server.
+
+Production builds request site PV and estimated UV from Busuanzi once per page,
+after an idle callback. The JSONP request sends only the origin as its referrer.
+Local servers and noncanonical hostnames do not count. Invalid responses and an
+eight-second timeout show unavailable, never a fabricated zero. Third-party
+totals are approximate and may be blocked; see the About page privacy notice.

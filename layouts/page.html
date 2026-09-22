@@ -1,6 +1,6 @@
 {{ define "main" }}
 <article class="post-page">
-  <header class="post-header">
+  <header class="post-header" id="article-start" tabindex="-1">
     <p class="breadcrumb"><a href="{{ site.Home.RelPermalink }}">主页</a> / {{ if eq .Section "posts" }}文章{{ else }}{{ .Title }}{{ end }}</p>
     <h1>{{ .Title }}</h1>
     {{ if eq .Section "posts" }}<div class="post-meta">
@@ -15,6 +15,15 @@
       {{ end }}
     </div>{{ end }}
   </header>
+  {{ if eq .Section "posts" }}
+  <aside class="reading-resume" data-reading-resume hidden aria-label="继续阅读">
+    <span data-reading-message></span>
+    <button type="button" data-reading-continue>继续阅读</button>
+    <button type="button" data-reading-reset>从头阅读</button>
+    <small>进度仅保存在当前浏览器</small>
+  </aside>
+  <a class="back-to-start" href="#article-start" data-back-to-start hidden aria-label="返回文章开头">↑ <span>文章开头</span></a>
+  {{ end }}
   <div class="reading-body">
   {{ if eq .Section "posts" }}
   <aside class="article-toc" data-toc hidden>
