@@ -57,3 +57,12 @@ menus:
     - name: 归档
       pageRef: /archives
       weight: 30
+    - name: 关于
+      pageRef: /about
+      weight: 40
+    - name: GitHub
+      url: https://github.com/Mer1997
+      weight: 50
+    - name: RSS
+      url: /index.xml
+      weight: 60
