@@ -32,6 +32,38 @@
       const sync = () => { toc.querySelector('details').open = wide.matches; };
       sync();
       wide.addEventListener('change', sync);
+      const links = [...list.querySelectorAll('a')];
+      let active = -1;
+      let scheduled = false;
+      const update = () => {
+        scheduled = false;
+        let next = 0;
+        const threshold = Math.min(140, innerHeight * 0.22);
+        for (let i = 0; i < headings.length; i++) {
+          if (headings[i].getBoundingClientRect().top <= threshold) next = i;
+        }
+        if (content.getBoundingClientRect().bottom <= innerHeight) next = headings.length - 1;
+        if (active === next) return;
+        if (active >= 0) links[active].removeAttribute('aria-current');
+        links[next].setAttribute('aria-current', 'location');
+        active = next;
+        if (toc.querySelector('details').open) {
+          const nav = toc.querySelector('nav');
+          const row = links[next].getBoundingClientRect();
+          const box = nav.getBoundingClientRect();
+          if (row.top < box.top) nav.scrollTop -= box.top - row.top;
+          else if (row.bottom > box.bottom) nav.scrollTop += row.bottom - box.bottom;
+        }
+      };
+      const schedule = () => {
+        if (!scheduled) { scheduled = true; requestAnimationFrame(update); }
+      };
+      addEventListener('scroll', schedule, { passive: true });
+      addEventListener('resize', schedule);
+      addEventListener('hashchange', schedule);
+      addEventListener('load', schedule);
+      document.fonts?.ready.then(schedule);
+      update();
     }
   }
 
@@ -40,6 +72,11 @@
     if (!source) continue;
     const toolbar = document.createElement('div');
     toolbar.className = 'code-toolbar';
+    const language = document.createElement('span');
+    language.className = 'code-language';
+    const token = source.dataset.lang || [...source.classList].find(c => c.startsWith('language-'))?.slice(9)
+      || [...block.classList].find(c => !['highlight', 'with-copy'].includes(c)) || 'text';
+    language.textContent = ({cpp:'C++', c:'C', bash:'Bash', sh:'Shell', js:'JavaScript', javascript:'JavaScript', python:'Python', plaintext:'Text', text:'Text'})[token] || token;
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = '复制代码';
@@ -59,8 +96,11 @@
       }
       setTimeout(() => { status.textContent = ''; }, 3000);
     });
-    toolbar.append(status, button);
-    block.before(toolbar);
+    toolbar.append(language, status, button);
+    const frame = document.createElement('div');
+    frame.className = 'code-frame';
+    block.before(frame);
+    frame.append(toolbar, block);
     block.classList.add('with-copy');
   }
 })();
