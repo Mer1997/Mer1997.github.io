@@ -34,7 +34,7 @@ markup:
       unsafe: true
 
 params:
-  description: Mer's Stack Pop Site
+  description: 技术、系统与长期笔记
   subtitle: 原来姹紫嫣红开遍，似这般都付与断井残垣
   hoverSubtitle: Talk is cheap, Show me the code
   author: Mer

@@ -44,6 +44,7 @@
     }
     try {
       const index = await load();
+      if (input.value.trim().toLocaleLowerCase('zh-CN') !== query) return;
       render(index.filter((post) =>
         [post.title, post.description, post.content, ...(post.tags || [])]
           .join(' ')
@@ -54,5 +55,11 @@
       console.error(error);
       render([]);
     }
+  });
+  root.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') results.hidden = true;
+  });
+  document.addEventListener('click', (event) => {
+    if (!root.contains(event.target)) results.hidden = true;
   });
 })();
