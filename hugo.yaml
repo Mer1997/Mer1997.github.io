@@ -7,6 +7,14 @@ enableRobotsTXT: true
 capitalizeListTitles: false
 summaryLength: 36
 
+related:
+  includeNewer: true
+  threshold: 20
+  toLower: true
+  indices:
+    - name: tags
+      weight: 100
+
 pagination:
   pagerSize: 10
 

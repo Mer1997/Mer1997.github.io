@@ -22,12 +22,15 @@
   </aside>
   {{ end }}
   <div class="post-content{{ if .Params.legacy }} legacy-content{{ end }}">
-    {{ .Content }}
+    {{ partial "article-images.html" . }}
   </div>
   </div>
   <aside class="license-box">
     本文采用 <a href="{{ site.Params.licenseURL }}">{{ site.Params.licenseName }}</a> 许可协议，转载请注明出处。
   </aside>
-  {{ if eq .Section "posts" }}{{ partial "giscus.html" . }}{{ end }}
+  {{ if eq .Section "posts" }}
+    {{ partial "related.html" . }}
+    {{ partial "giscus.html" . }}
+  {{ end }}
 </article>
 {{ end }}
