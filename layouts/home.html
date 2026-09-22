@@ -1,15 +1,15 @@
 {{ define "main" }}
-  <section class="intro">
-    <p class="eyebrow">技术、系统与长期笔记</p>
-    <h1>{{ site.Title }}</h1>
-    <p>{{ site.Params.description }}</p>
-  </section>
-
-  <section class="search-panel" data-search>
-    <label for="site-search">搜索文章</label>
-    <input id="site-search" type="search" placeholder="输入标题、标签或正文关键词" autocomplete="off">
-    <div class="search-results" data-search-results hidden></div>
-  </section>
+  <div class="home-toolbar">
+    <div class="home-heading">
+      <h1>近期文章</h1>
+      <p>技术、系统与长期笔记</p>
+    </div>
+    <section class="search-panel" data-search aria-label="站内搜索">
+      <label class="visually-hidden" for="site-search">搜索文章</label>
+      <input id="site-search" type="search" placeholder="搜索文章…" autocomplete="off" aria-controls="search-results">
+      <div id="search-results" class="search-results" data-search-results aria-live="polite" hidden></div>
+    </section>
+  </div>
 
   {{ $posts := where site.RegularPages "Section" "posts" }}
   {{ $paginator := .Paginate $posts }}
