@@ -1,0 +1,3 @@
+{{- if and hugo.IsProduction (os.Getenv "HUGO_CF_WEB_ANALYTICS_TOKEN") -}}
+<p>本站还使用 Cloudflare Web Analytics 汇总真实访客的页面性能，包括 LCP、INP、CLS，以及页面路径、设备和浏览器类型。该服务的信标不会在浏览器中使用 Cookie 或 localStorage 识别访客；性能数据会发送到 Cloudflare。具体指标只在站点管理后台查看。</p>
+{{- end -}}

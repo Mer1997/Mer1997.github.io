@@ -66,3 +66,30 @@ after an idle callback. The JSONP request sends only the origin as its referrer.
 Local servers and noncanonical hostnames do not count. Invalid responses and an
 eight-second timeout show unavailable, never a fabricated zero. Third-party
 totals are approximate and may be blocked; see the About page privacy notice.
+
+## Link health
+
+`python3 scripts/check_links.py` checks generated HTML links, image/script assets,
+and destination fragments. The strict local check runs on each pull request and
+deployment. A separate Monday GitHub Actions job also probes external URLs and
+publishes a report in its workflow summary. Confirmed external 404/410 responses
+fail that audit; 403/429, server errors and timeouts are listed for manual review
+because they can be caused by bot protection or transient outages.
+
+## Real-device performance
+
+Cloudflare Web Analytics can collect real visitor LCP, INP and CLS on this
+GitHub Pages site. In Cloudflare Web Analytics, add `merisky.top`, select manual
+JS Snippet installation, then copy the 32-character site token from Manage site.
+Set the public GitHub repository variable `CF_WEB_ANALYTICS_TOKEN` to that value;
+the Pages workflow passes it to Hugo as `HUGO_CF_WEB_ANALYTICS_TOKEN`. A production
+build embeds the official Cloudflare beacon only when the token is present. Local
+`hugo server` previews and builds without a token do not send performance data.
+The Cloudflare site token is a public embed identifier, not an API credential.
+Do not add an API key or account token here. If Cloudflare is configured to
+automatically inject Web Analytics on a proxied hostname, leave this variable
+unset to avoid loading the beacon twice.
+
+After deploying, check Cloudflare Web Analytics → `merisky.top` → Core Web Vitals.
+Metrics only appear after actual visitor sessions; filter by page and device,
+and use P75 values rather than a single visit to choose optimizations.
