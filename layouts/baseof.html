@@ -20,6 +20,10 @@
     {{ if hugo.IsProduction }}
       {{ $stats := resources.Get "js/stats.js" | minify | fingerprint }}
       <script defer src="{{ $stats.RelPermalink }}" integrity="{{ $stats.Data.Integrity }}"></script>
+      {{ with os.Getenv "HUGO_CF_WEB_ANALYTICS_TOKEN" }}
+        {{ if not (findRE `^[a-fA-F0-9]{32}$` .) }}{{ errorf "Cloudflare Web Analytics site token must be 32 hexadecimal characters" }}{{ end }}
+        <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{{ dict "token" . | jsonify }}'></script>
+      {{ end }}
     {{ end }}
   </body>
 </html>

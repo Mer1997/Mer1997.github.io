@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="332" viewBox="0 0 840 332" role="img" aria-labelledby="title desc">
+  <title id="title">CephFS 文件条带映射示意</title>
+  <desc id="desc">条带单元 0 到 3 依次写入对象 0 到 3；条带单元 4 到 7 再从对象 0 开始。</desc>
+  <rect width="840" height="332" rx="16" fill="#f7f5f0"/>
+  <rect x="22" y="22" width="796" height="286" rx="13" fill="#fff" stroke="#ded8cf" stroke-width="2"/>
+  <text x="46" y="60" font-family="system-ui, sans-serif" font-size="22" font-weight="700" fill="#25221e">ObjectSet 1</text>
+  <text x="46" y="89" font-family="system-ui, sans-serif" font-size="14" fill="#736d65">条带单元按序轮流映射到四个对象</text>
+  <g font-family="system-ui, sans-serif" text-anchor="middle">
+    <g fill="#25221e" font-size="16" font-weight="700">
+      <text x="135" y="131">Object 0</text><text x="325" y="131">Object 1</text>
+      <text x="515" y="131">Object 2</text><text x="705" y="131">Object 3</text>
+    </g>
+    <g fill="#eee8ff" stroke="#7557c2" stroke-width="1.5">
+      <rect x="61" y="148" width="148" height="54" rx="9"/><rect x="251" y="148" width="148" height="54" rx="9"/>
+      <rect x="441" y="148" width="148" height="54" rx="9"/><rect x="631" y="148" width="148" height="54" rx="9"/>
+    </g>
+    <g fill="#7557c2" font-size="16">
+      <text x="135" y="182">stripe unit 0</text><text x="325" y="182">stripe unit 1</text>
+      <text x="515" y="182">stripe unit 2</text><text x="705" y="182">stripe unit 3</text>
+    </g>
+    <g fill="#f0f3f5" stroke="#7d8e98" stroke-width="1.5">
+      <rect x="61" y="218" width="148" height="54" rx="9"/><rect x="251" y="218" width="148" height="54" rx="9"/>
+      <rect x="441" y="218" width="148" height="54" rx="9"/><rect x="631" y="218" width="148" height="54" rx="9"/>
+    </g>
+    <g fill="#465761" font-size="16">
+      <text x="135" y="252">stripe unit 4</text><text x="325" y="252">stripe unit 5</text>
+      <text x="515" y="252">stripe unit 6</text><text x="705" y="252">stripe unit 7</text>
+    </g>
+  </g>
+</svg>

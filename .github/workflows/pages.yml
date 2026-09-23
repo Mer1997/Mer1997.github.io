@@ -36,7 +36,13 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build
+        env:
+          HUGO_CF_WEB_ANALYTICS_TOKEN: ${{ vars.CF_WEB_ANALYTICS_TOKEN }}
         run: hugo --gc --minify --panicOnWarning
+      - name: Check internal links and anchors
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_links.py'
+          python3 scripts/check_links.py
       - name: Validate related reading and images
         run: python3 scripts/validate-reading.py
       - name: Test reading memory and visitor counter
