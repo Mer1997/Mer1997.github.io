@@ -1,16 +1,23 @@
 +++
-title = "关于"
-description = "Mer 的技术博客：系统、代码与长期笔记。"
+title = "关于我"
+description = "Mer 的技术方向、博客内容与联系方式。"
 +++
 
-这里是 Mer 的个人博客，记录技术学习、源码阅读和问题分析。
+我是 Mer（孟轩逸），主要做分布式存储和 C++ 系统开发。
 
-文章主要涉及 Ceph、C++、算法与系统开发。希望这些笔记既能帮助自己回顾，也能给遇到相似问题的人一些参考。
+## 技术方向
 
-## 联系与订阅
+- Ceph / CephFS：MDS、客户端、问题排查与源码分析
+- 内存与分层存储：内存对象、KV Cache 数据通路
+- 高性能系统：Seastar、RDMA、异步 I/O
 
-- [GitHub：Mer1997](https://github.com/Mer1997)
-- [通过 RSS 订阅文章](/index.xml)
+这个博客主要记录技术笔记和遇到的问题。
+
+## 联系我
+
+- 邮箱：[mer.xuanyi@gmail.com](mailto:mer.xuanyi@gmail.com)
+- GitHub：[Mer1997](https://github.com/Mer1997)
+- 订阅：[RSS](/index.xml)
 
 ## 阅读说明
 
