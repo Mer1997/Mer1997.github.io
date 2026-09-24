@@ -76,6 +76,20 @@ publishes a report in its workflow summary. Confirmed external 404/410 responses
 fail that audit; 403/429, server errors and timeouts are listed for manual review
 because they can be caused by bot protection or transient outages.
 
+## Search indexing
+
+The canonical hostname is `https://merisky.top/`. Hugo generates the sitemap
+at `https://merisky.top/sitemap.xml`; `robots.txt` points crawlers to it. Existing
+numeric article URLs are preserved. An existing Google HTML verification file
+is published at the site root, which may verify a Google Search Console
+URL-prefix property owned by the same Google account.
+
+In Google Search Console, verify `https://merisky.top/` and submit
+`https://merisky.top/sitemap.xml` once. In Bing Webmaster Tools, import this
+verified Google property and its sitemap, or verify the site manually and
+submit the same sitemap. Check each dashboard's crawl and indexing reports
+later; sitemap submission is a discovery hint, not an indexing guarantee.
+
 ## Real-device performance
 
 Cloudflare Web Analytics can collect real visitor LCP, INP and CLS on this
